@@ -835,7 +835,62 @@ function histUse(){const inR=hRange(),A=new Map();
     for(const l of (j.lines||[])){const no=String(l.no||'').trim();if(!no)continue;const k=no.toUpperCase();if(!A.has(k))A.set(k,{no,m2:0,rows:[]});const a=A.get(k),m2=num(l.m2);a.m2+=m2;
       a.rows.push({t:j.endedAt,st:j.startedAt,job:j.id,machine:j.machine,mat:mName(mat(j.materialId)),m2,share:tot>0?m2/tot:0,sheetM2:tot,plates:used,pa:sumA(used),kept:lefts.filter(p=>p.status!=='scrap'),scrap:lefts.filter(p=>p.status==='scrap'),others:(j.lines||[]).filter(x=>x!==l).map(x=>x.no)})}}
   return [...A.values()].sort((a,b)=>Math.max(...b.rows.map(r=>r.t))-Math.max(...a.rows.map(r=>r.t)))}
-const HS=[['daily','Daily'],['orders','Orders'],['use','Stock use per job number']];
+
+/* ---------- Stock usage history (plate m² taken from stock, per plate type and date) ---------- */
+function usageRows(){const inR=hRange(),R=[];
+  for(const j of S.jobs){if(isForm(j.machine)||j.status!=='done'||!j.endedAt||!inR(j.endedAt))continue;
+    const used=((j.result&&j.result.used)||[]).map(plate).filter(Boolean),kept=((j.result&&j.result.leftovers)||[]).map(plate).filter(p=>p&&p.status!=='scrap'),k=dayKey(j.endedAt);
+    for(const p of used)R.push({k,mid:p.materialId,a:area(p),n:1,job:j.id});
+    for(const p of kept)R.push({k,mid:p.materialId,a:-area(p),n:0,job:j.id})}
+  return R}
+const uMon=k=>{const [y,m,d]=k.split('-').map(Number),dt=new Date(y,m-1,d);dt.setDate(dt.getDate()-((dt.getDay()+6)%7));return dayKey(dt)};
+const uBucket=(k,g)=>g==='month'?k.slice(0,7):g==='week'?uMon(k):k;
+const uLabel=(b,g)=>{if(g==='month'){const [y,m]=b.split('-').map(Number);return new Date(y,m-1,1).toLocaleDateString([],{month:'short',year:'numeric'})}const [y,m,d]=b.split('-').map(Number),t=new Date(y,m-1,d).toLocaleDateString([],{day:'2-digit',month:'short',year:'2-digit'});return g==='week'?'Week of '+t:t};
+function uSeries(R,g,first,last){const out=[];if(!first)return out;const [y,m,d]=first.split('-').map(Number),cur=new Date(y,m-1,d),seen=new Set();
+  while(dayKey(cur)<=last){const b=uBucket(dayKey(cur),g);if(!seen.has(b)){seen.add(b);out.push(b)}cur.setDate(cur.getDate()+1)}return out}
+function uBars(series,vals,o){const n=series.length;if(!n)return '';const W=o.w||900,H=o.h||220,pad=o.small?2:28,top=o.small?2:16,mx=Math.max(...vals.map(v=>v.a),0.0001),bw=Math.max(2,(W-pad*1.2)/n*0.72),step=(W-pad*1.2)/n;
+  let g='';series.forEach((b,i)=>{const v=vals[i],h=v.a>0?(H-pad-top)*v.a/mx:0,x=pad+i*step+(step-bw)/2,y=H-pad-h;
+    g+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h,v.a>0?1:0).toFixed(1)}" rx="2" fill="${v.a>0?'var(--acc,#f5c400)':'transparent'}" stroke="${v.a>0?'#8a6d00':'none'}" stroke-width=".5"><title>${esc(uLabel(b,o.g))}: ${f2(v.a)} m² used${v.n?` · ${v.n} plate${v.n>1?'s':''}`:''}</title></rect>`;
+    if(!o.small&&v.a>0&&n<=40)g+=`<text x="${(x+bw/2).toFixed(1)}" y="${(y-3).toFixed(1)}" text-anchor="middle" font-size="9" fill="currentColor">${v.a>=10?Math.round(v.a):v.a.toFixed(1)}</text>`;
+    if(!o.small&&(n<=16||i%Math.ceil(n/16)===0))g+=`<text x="${(x+bw/2).toFixed(1)}" y="${H-pad+12}" text-anchor="middle" font-size="9" fill="currentColor" opacity=".7">${esc(o.g==='month'?uLabel(b,'month'):b.slice(8)+'/'+b.slice(5,7))}</text>`});
+  if(!o.small)g=`<line x1="${pad}" y1="${H-pad}" x2="${W}" y2="${H-pad}" stroke="currentColor" opacity=".3"/><text x="2" y="${top+8}" font-size="9" fill="currentColor" opacity=".7">${f2(mx)} m²</text>`+g;
+  return `<svg viewBox="0 0 ${W} ${H}" ${o.small?`width="${W}" height="${H}"`:'style="width:100%;height:auto"'} role="img" aria-label="${esc(o.label||'Usage')}">${g}</svg>`}
+function usageCalc(){const g=['day','week','month'].includes(draft.hug)?draft.hug:'week',R=usageRows();
+  const days=R.map(r=>r.k).sort(),first=draft.hf||days[0]||'',last=draft.ht||dayKey(Date.now());
+  const series=uSeries(R,g,first,last),wSeries=uSeries(R,'week',first,last),M=new Map();
+  for(const r of R){if(!M.has(r.mid))M.set(r.mid,{mid:r.mid,m:mat(r.mid),a:0,n:0,by:new Map(),wk:new Map(),days:new Set()});const x=M.get(r.mid),b=uBucket(r.k,g),w=uMon(r.k);
+    x.a+=r.a;x.n+=r.n;x.days.add(r.k);const e=x.by.get(b)||{a:0,n:0};e.a+=r.a;e.n+=r.n;x.by.set(b,e);x.wk.set(w,(x.wk.get(w)||0)+r.a)}
+  const rs=rset(),lt=Math.max(0,num(draft.hlt===undefined?2:draft.hlt)),nW=Math.max(1,wSeries.length);
+  const mats=[...M.values()].filter(x=>x.m).map(x=>{const wv=wSeries.map(w=>Math.max(0,x.wk.get(w)||0)),avg=Math.max(0,x.a)/nW,peak=Math.max(0,...wv),free=platesOf(x.mid,'available').filter(p=>!rs.has(p.id)).reduce((s,p)=>s+area(p),0);
+    return {...x,avg,peak,free,weeksLeft:avg>0?free/avg:Infinity,sug:avg*lt+(peak-avg),vals:series.map(b=>{const e=x.by.get(b)||{a:0,n:0};return {a:Math.max(0,e.a),n:e.n}})}})
+    .sort((a,b)=>String(a.m.type).localeCompare(b.m.type)||String(a.m.grade||'').localeCompare(String(b.m.grade||''),undefined,{numeric:true})||byThick(a.m,b.m));
+  return {g,series,mats,first,last,nW,lt}}
+function vUsage(o){const U=usageCalc(),{g,series,mats}=U;
+  const sel=mats.some(x=>x.mid===draft.hut)?draft.hut:'',typesU=[...new Set(mats.map(x=>x.m.type))],selT=typesU.includes(draft.hut)?draft.hut:'';
+  const pick=sel?mats.filter(x=>x.mid===sel):mats.filter(x=>!selT||x.m.type===selT);
+  const tot=series.map((b,i)=>({a:pick.reduce((s,x)=>s+x.vals[i].a,0),n:pick.reduce((s,x)=>s+x.vals[i].n,0)}));
+  o+=`<p class="mut" style="margin-top:0">Plate area taken from stock by finished Plasma and Laser jobs, minus offcuts that went back into stock. Use it to see how fast each plate type is used and to set minimum stock levels.</p>
+  <div class="row" style="align-items:end;gap:10px;margin-bottom:14px"><div><label>Group by</label><div class="row">${[['day','Day'],['week','Week'],['month','Month']].map(([k,l])=>`<button class="sm${g===k?' on':''}" data-act="hug" data-id="${k}">${l}</button>`).join('')}</div></div>
+  <div style="min-width:240px"><label for="hut">Plate type</label><select id="hut" data-hd="hut"><option value="">All plate types</option>${typesU.map(t=>`<option value="${esc(t)}"${selT===t?' selected':''}>All ${esc(t)}</option><optgroup label="${esc(t)}">${mats.filter(x=>x.m.type===t).map(x=>`<option value="${esc(x.mid)}"${sel===x.mid?' selected':''}>${esc(mName(x.m))}</option>`).join('')}</optgroup>`).join('')}</select></div>
+  <div style="width:150px"><label for="hlt">Supplier lead time (weeks)</label><input id="hlt" type="number" min="0" step="0.5" data-hd="hlt" value="${esc(draft.hlt===undefined?2:draft.hlt)}"></div></div>`;
+  if(!mats.length)return o+`<div class="empty">No plate usage recorded for these dates yet. Every Plasma or Laser job that is finished with the plates it used is counted here, so this history builds up from now on.</div>`;
+  const tA=tot.reduce((s,v)=>s+v.a,0),tN=tot.reduce((s,v)=>s+v.n,0);
+  o+=`<div class="panel" style="margin-bottom:16px"><div class="row"><h3>${esc(sel?mName(mat(sel)):selT?'All '+selT:'All plate types')}</h3><span class="sp"></span><b>${f2(tA)} m²</b><span class="small mut">· ${tN} plate${tN===1?'':'s'} · ${esc(fmtDay(U.first))} – ${esc(fmtDay(U.last))}</span></div>${uBars(series,tot,{g,label:'Usage chart'})}<p class="small mut" style="margin:4px 0 0">Each bar is one ${g}. Hover or tap a bar for the date and quantity.</p></div>`;
+  o+=`<div class="scroll"><table class="stack"><thead><tr><th>Plate type</th><th>Usage by ${g} (dates and quantity)</th><th>Used m²</th><th>Plates</th><th>Average per week</th><th>Highest week</th><th>Free in stock</th><th>Weeks left</th><th>Suggested minimum</th><th>Reorder level now</th><th></th></tr></thead><tbody>${mats.filter(x=>pick.includes(x)).map(x=>{const sg=Math.ceil(x.sug*10)/10;
+    return `<tr><td><b>${esc(mName(x.m))}</b>${x.m.code?`<div class="small mut">${esc(x.m.code)}</div>`:''}</td><td>${uBars(series,x.vals,{g,small:true,w:Math.min(260,Math.max(90,series.length*8)),h:34,label:mName(x.m)})}<div class="small mut">${[...x.by].filter(([,e])=>e.a>0).sort((p,q)=>p[0].localeCompare(q[0])).slice(-3).map(([b,e])=>`${esc(uLabel(b,g))}: ${f2(e.a)} m²`).join(' · ')}</div></td><td class="n">${f2(Math.max(0,x.a))}</td><td class="n">${x.n}</td><td class="n">${f2(x.avg)} m²</td><td class="n">${f2(x.peak)} m²</td><td class="n">${f2(x.free)} m²</td><td class="n">${x.weeksLeft===Infinity?'—':`<span class="${x.weeksLeft<U.lt?'chip bad':''}">${x.weeksLeft.toFixed(1)}</span>`}</td><td class="n"><b>${f2(sg)} m²</b></td><td class="n">${f2(num(x.m.reorder))} m²</td><td>${sg>0&&Math.abs(sg-num(x.m.reorder))>0.05?`<button class="sm" data-act="useMin" data-id="${esc(x.mid)}" data-v="${sg}">Use as reorder level</button>`:''}</td></tr>`}).join('')}</tbody></table></div>
+  <p class="small mut">Suggested minimum = average weekly use × lead time (${esc(U.lt)} weeks) + a safety margin (highest week − average week). Based on ${U.nW} week${U.nW>1?'s':''} of data — it becomes more reliable as more history builds up.</p>`;
+  return o}
+async function exportUsage(){try{const U=usageCalc(),today=dayKey(Date.now()),range=(draft.hf||draft.ht)?`Dates: ${draft.hf||'start'} to ${draft.ht||'today'}`:'All dates';
+  const sum=U.mats.map(x=>({v:[x.m.type,x.m.grade||'',num(x.m.thick),x.m.code||'',+Math.max(0,x.a).toFixed(3),x.n,+x.avg.toFixed(3),+x.peak.toFixed(3),+x.free.toFixed(3),x.weeksLeft===Infinity?'':+x.weeksLeft.toFixed(1),+(Math.ceil(x.sug*10)/10).toFixed(1),num(x.m.reorder)],tone:{9:x.weeksLeft<U.lt?'bad':'mut'}}));
+  const grid=U.mats.map(x=>({v:[mName(x.m),...x.vals.map(v=>v.a?+v.a.toFixed(3):''),+Math.max(0,x.a).toFixed(3)]}));
+  if(grid.length)grid.push({k:'total',v:['TOTAL',...U.series.map((b,i)=>+U.mats.reduce((s,x)=>s+x.vals[i].a,0).toFixed(3)),+U.mats.reduce((s,x)=>s+Math.max(0,x.a),0).toFixed(3)]});
+  const det=[];for(const r of usageRows().sort((a,b)=>a.k.localeCompare(b.k))){const m=mat(r.mid);if(m)det.push({v:[r.k,mName(m),r.job,r.n?'Plate used':'Offcut back to stock',r.n,+r.a.toFixed(3)],tone:{5:r.a<0?'good':'mut'}})}
+  await xbook(`Stock usage ${today}.xlsx`,[
+    {name:'Summary',title:'Stock usage per plate type — minimum stock',note:`${range} · lead time ${U.lt} weeks`,cols:[{h:'Material',w:12},{h:'Grade',w:10},{h:'Thickness (mm)',w:11,f:'int'},{h:'Item code',w:15},{h:'Used (m²)',w:11,f:'m2'},{h:'Plates',w:8,f:'int'},{h:'Avg per week (m²)',w:12,f:'m2'},{h:'Highest week (m²)',w:12,f:'m2'},{h:'Free in stock (m²)',w:12,f:'m2'},{h:'Weeks left',w:10},{h:'Suggested minimum (m²)',w:13,f:'m2'},{h:'Reorder level now (m²)',w:13,f:'m2'}],rows:sum},
+    {name:'By '+U.g,title:`m² used per ${U.g}`,note:range,filter:false,cols:[{h:'Plate type',w:24},...U.series.map(b=>({h:uLabel(b,U.g),w:12,f:'m2'})),{h:'Total',w:11,f:'m2'}],rows:grid},
+    {name:'Details',title:'Every plate used and offcut returned',note:range,cols:[{h:'Date',w:12},{h:'Plate type',w:24},{h:'Sheet',w:10},{h:'Type',w:18},{h:'Plates',w:8,f:'int'},{h:'m²',w:10,f:'m2'}],rows:det}],range);
+  setMsg('Excel file saved.');render()}catch(e){xErr(e)}}
+const HS=[['daily','Daily'],['orders','Orders'],['use','Stock use per job number'],['susage','Stock usage history']];
 function vHist(){
   const hs=HS.some(x=>x[0]===draft.hs)?draft.hs:'daily';
   let o=`${note()}<h2>History</h2><div class="row" style="margin:12px 0">${HS.map(([k,l])=>`<button class="${hs===k?'on':''}" data-act="hs" data-id="${k}">${l}</button>`).join('')}</div>
@@ -843,6 +898,7 @@ function vHist(){
   if(hs==='daily'){const days=histDaily();if(!days.length)return o+`<div class="empty">Nothing recorded for these dates yet. Finished jobs, problems, accessories used and orders appear here day by day.</div>`;
     return o+`<table class="stack"><thead><tr><th>Day</th><th>Plasma</th><th>Laser</th><th>Bending</th><th>Rolling</th><th>m² cut</th><th>Plates used</th><th>Good / rejects</th><th>Problems</th><th>Accessories used</th><th>Plates ordered / received</th><th></th></tr></thead><tbody>${days.map(r=>{const P=r.mach.plasma,L=r.mach.laser,B=r.mach.bend,R=r.mach.roll,op=draft.hopen===r.k;
       return `<tr><td><b>${esc(fmtDay(r.k))}</b></td><td class="n">${P.n} sheet${P.n===1?'':'s'}</td><td class="n">${L.n} sheet${L.n===1?'':'s'}</td><td class="n">${B.n} job${B.n===1?'':'s'}</td><td class="n">${R.n} job${R.n===1?'':'s'}</td><td class="n">${f2(P.m2+L.m2)}</td><td class="n">${P.pl+L.pl} (${f2(P.pa+L.pa)} m²)</td><td class="n">${P.good+L.good+B.good} / ${P.rej+L.rej+B.rej}</td><td class="n">${r.prob||'—'}</td><td class="n">${r.acc||'—'}</td><td class="n">${r.ordered||0} / ${r.received||0}</td><td>${r.jobs.length?`<button class="sm${op?' on':''}" data-act="hopen" data-id="${esc(r.k)}">${op?'Close':'Jobs'}</button>`:''}</td></tr>${op?`<tr class="xp"><td colspan="11"><div class="scroll"><table class="xl"><thead><tr><th>Start</th><th>End</th><th>Duration</th><th>Sheet</th><th>Machine</th><th>Gas</th><th>Material</th><th>Job numbers</th><th>m²</th><th>Good</th><th>Rejects</th><th>Operator</th></tr></thead><tbody>${r.jobs.sort((a,b)=>num(a.startedAt||a.endedAt)-num(b.startedAt||b.endedAt)).map(j=>`<tr>${[dayKey(j.startedAt||j.endedAt)===r.k?hm(j.startedAt):dtm(j.startedAt),hm(j.endedAt),durTxt(j.startedAt,j.endedAt),j.id,MN(j.machine),gasName(j.machine,j.gas)||'—',mName(mat(j.materialId)),(j.lines||[]).map(l=>l.no).join(', '),isForm(j.machine)?'—':f2(jobM2(j)),num(j.result&&j.result.good),num(j.result&&j.result.rej),j.operator||''].map(v=>`<td style="padding:6px 8px;white-space:nowrap">${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></td></tr>`:''}`}).join('')}</tbody></table>`}
+  if(hs==='susage')return vUsage(o);
   if(hs==='orders'){const inR=hRange(),L=(S.ordLog||[]).filter(l=>inR(l.t)).slice().reverse();if(!L.length)return o+`<div class="empty">No order history for these dates. Plates you order, receive or cancel from now on are recorded here.</div>`;
     const TL={ordered:'Ordered',received:'Received',cancelled:'Cancelled',booked:'Booked into stock'};
     return o+`<table class="stack"><thead><tr><th>Date</th><th>Action</th><th>Item code</th><th>Material</th><th>Size mm</th><th>Qty</th><th>m²</th><th>Supplier / PO</th></tr></thead><tbody>${L.map(l=>`<tr><td>${esc(new Date(l.t).toLocaleString([],{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}))}</td><td><span class="chip${l.type==='cancelled'?' bad':l.type==='received'||l.type==='booked'?' ok':''}">${TL[l.type]||esc(l.type)}</span></td><td>${esc(l.code||'—')}</td><td>${esc(l.mat)}</td><td class="n">${esc(l.L)}×${esc(l.W)}</td><td class="n">${esc(l.qty)}</td><td class="n">${f2(l.m2)}</td><td>${esc([l.supplier,l.po].filter(Boolean).join(' · ')||'—')}</td></tr>`).join('')}</tbody></table>`}
@@ -1233,6 +1289,7 @@ document.addEventListener('change',e=>{
 
 
 
+    else if(d.hd){draft[d.hd]=t.value;render()}
     else if(d.donef){(draft.doneF||(draft.doneF={}))[d.donef]=t.value;ls.set('doneF',t.value);render()}
     else if(d.urole&&isAdmin()&&SRV){srvAct('urole',d.urole,t.value)}
     else if(d.urole&&isAdmin()){const A=AUTH(),x=A.users.find(y=>y.id===d.urole);if(x&&(t.value==='admin'||t.value==='user')){if(x.role==='admin'&&t.value!=='admin'&&A.users.filter(y=>y.role==='admin').length<=1){setMsg('Keep at least one administrator.');render();return}x.role=t.value;uSave(`${x.name} is now ${ROLE[x.role]}.`)}}
@@ -1364,7 +1421,9 @@ document.addEventListener('click',e=>{
   else if(a==='hs'){draft.hs=id;render()}
   else if(a==='hopen'){draft.hopen=draft.hopen===id?'':id;render()}
   else if(a==='hclr'){draft.hf='';draft.ht='';render()}
-  else if(a==='hxls'){exportHist()}
+  else if(a==='hxls'){draft.hs==='susage'?exportUsage():exportHist()}
+  else if(a==='hug'){draft.hug=id;render()}
+  else if(a==='useMin'){const m=mat(id),v=num(e.target.closest('[data-v]')?.dataset.v);if(m&&v>0){m.reorder=v;setMsg(`Reorder level for ${mName(m)} set to ${f2(v)} m².`);save()}}
   else if(a==='am'){draft.am=id||'';render()}
   else if(a==='axls'){exportAcc()}
   else if(a==='aadd'){const na=draft.na,n=String(na.name||'').trim();if(!n){setMsg('Type the accessory name.');render();return}
