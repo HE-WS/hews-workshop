@@ -594,13 +594,29 @@ function srow(m,s){
 }
 
 /* ---------- Plates ---------- */
+const plateList=(all)=>{const f=draft.pf,l=S.plates.filter(p=>(!f.mat||p.materialId===f.mat)&&(!f.st||p.status===f.st)&&(!f.or||p.origin===f.or)).sort((a,b)=>num(b.createdAt)-num(a.createdAt)||area(b)-area(a));return all?l:l.slice(0,200)};
+async function exportPlates(){try{
+  const f=draft.pf,rs=rset(),today=dayKey(Date.now()),list=plateList(true);
+  const stTxt=p=>(ST[p.status]||p.status)+(p.status==='available'&&rs.has(p.id)?' (reserved)':'');
+  const sel=[f.mat?mName(mat(f.mat)):'All materials',f.st?({available:'In stock',ordered:'On order',used:'Used',scrap:'Scrap'}[f.st]||f.st):'All statuses',f.or==='purchase'?'Bought plates':f.or==='offcut'?'Offcuts':'All origins'].join(' · ');
+  const srt=list.slice().sort((a,b)=>{const ma=mat(a.materialId)||{},mb=mat(b.materialId)||{};return String(ma.type).localeCompare(String(mb.type))||String(ma.grade||'').localeCompare(String(mb.grade||''),undefined,{numeric:true})||num(ma.thick)-num(mb.thick)||area(b)-area(a)});
+  const rows=srt.map(p=>{const m=mat(p.materialId)||{},d=p.d||{};return {v:[p.id,m.type||'',m.grade||'',num(m.thick),m.code||'',shapeOf(p)==='rect'?'Rectangle '+pDesc(p):pDesc(p),shapeOf(p)==='rect'?num(d.L):'',shapeOf(p)==='rect'?num(d.W):'',+area(p).toFixed(3),Math.round(kg(p)),stTxt(p),p.origin==='offcut'?'Offcut':'Bought plate',p.origin==='offcut'?(p.fromJob||''):'',p.supplier||m.supplier||'',p.po||'',isoDay(p.createdAt)],tone:{10:p.status==='scrap'?'bad':p.status==='available'?'good':'mut'}}});
+  rows.push({k:'total',v:['TOTAL',list.length+' plates','','','','','','',+sumA(list).toFixed(3),Math.round(list.reduce((x,p)=>x+kg(p),0)),'','','','','','']});
+  const G=new Map();for(const p of srt){const m=mat(p.materialId)||{},k=p.materialId;if(!G.has(k))G.set(k,{m,n:0,a:0,kg:0,inN:0,inA:0,resA:0,ordA:0,off:0});const g=G.get(k);g.n++;g.a+=area(p);g.kg+=kg(p);if(p.status==='available'){g.inN++;g.inA+=area(p);if(rs.has(p.id))g.resA+=area(p)}if(p.status==='ordered')g.ordA+=area(p);if(p.origin==='offcut')g.off++}
+  const sum=[];let lt='';for(const g of G.values()){if(g.m.type!==lt){sum.push({k:'group',v:[g.m.type||'Unknown','','','','','','','','','','']});lt=g.m.type}
+    sum.push({indent:2,v:['',g.m.grade||'',num(g.m.thick),g.m.code||'',g.n,+g.a.toFixed(3),Math.round(g.kg),g.inN,+g.inA.toFixed(3),+(g.inA-g.resA).toFixed(3),+g.ordA.toFixed(3)]})}
+  const T=[...G.values()];sum.push({k:'total',v:['TOTAL','','','',T.reduce((x,g)=>x+g.n,0),+T.reduce((x,g)=>x+g.a,0).toFixed(3),Math.round(T.reduce((x,g)=>x+g.kg,0)),T.reduce((x,g)=>x+g.inN,0),+T.reduce((x,g)=>x+g.inA,0).toFixed(3),+T.reduce((x,g)=>x+g.inA-g.resA,0).toFixed(3),+T.reduce((x,g)=>x+g.ordA,0).toFixed(3)]});
+  await xbook(`Plates ${today}.xlsx`,[
+    {name:'Plates',title:'Plates and offcuts',note:sel,cols:[{h:'Plate ID',w:12},{h:'Material',w:12},{h:'Grade',w:10},{h:'Thickness (mm)',w:11,f:'int'},{h:'Item code',w:15},{h:'Shape / size',w:24},{h:'Length (mm)',w:11,f:'int'},{h:'Width (mm)',w:11,f:'int'},{h:'Area (m²)',w:10,f:'m2'},{h:'Weight (kg)',w:11,f:'kg'},{h:'Status',w:16},{h:'Origin',w:13},{h:'From job',w:12},{h:'Supplier',w:16},{h:'Order / PO no.',w:15},{h:'Date added',w:12}],rows},
+    {name:'Summary',title:'Plates by material',note:sel,filter:false,cols:[{h:'Material',w:14},{h:'Grade',w:10},{h:'Thickness (mm)',w:11,f:'int'},{h:'Item code',w:15},{h:'Plates',w:9,f:'int'},{h:'Area (m²)',w:11,f:'m2'},{h:'Weight (kg)',w:12,f:'kg'},{h:'In stock (plates)',w:11,f:'int'},{h:'In stock (m²)',w:11,f:'m2'},{h:'Free (m²)',w:11,f:'m2'},{h:'On order (m²)',w:11,f:'m2'}],rows:sum}]);
+  setMsg('Excel file saved.');render()}catch(e){xErr(e)}}
 function vPlates(){
-  const f=draft.pf,rs=rset(),list=S.plates.filter(p=>(!f.mat||p.materialId===f.mat)&&(!f.st||p.status===f.st)&&(!f.or||p.origin===f.or)).sort((a,b)=>num(b.createdAt)-num(a.createdAt)||area(b)-area(a)).slice(0,200);
+  const f=draft.pf,rs=rset(),list=plateList();
   let o=`${note()}<h2>Plates and offcuts</h2><p class="mut">Every plate and every leftover piece, drawn to scale. Offcuts kept by operators go straight back into stock and can be picked for new jobs.</p>
   <div class="form" style="margin:14px 0 18px;max-width:900px"><div><label for="fm">Material</label><select id="fm" data-pf="mat">${matOpts(f.mat,'All materials')}</select></div>
   <div><label for="fs">Status</label><select id="fs" data-pf="st">${[['available','In stock'],['ordered','On order'],['used','Used'],['scrap','Scrap'],['','All']].map(([v,l])=>`<option value="${v}"${v===f.st?' selected':''}>${l}</option>`).join('')}</select></div>
   <div><label for="fo">Origin</label><select id="fo" data-pf="or">${[['','All'],['purchase','Bought plates'],['offcut','Offcuts from jobs']].map(([v,l])=>`<option value="${v}"${v===f.or?' selected':''}>${l}</option>`).join('')}</select></div></div>
-  <p class="small mut">${list.length} plate(s) · ${f2(sumA(list))} m² · ${(list.reduce((x,p)=>x+kg(p),0)/1000).toFixed(2)} t</p>`;
+  <div class="row" style="align-items:center;margin-bottom:8px"><p class="small mut" style="margin:0">${list.length} plate(s) · ${f2(sumA(list))} m² · ${(list.reduce((x,p)=>x+kg(p),0)/1000).toFixed(2)} t</p><span class="sp"></span>${dls&&list.length?`<button class="go" data-act="xlsP">Export to Excel</button>`:''}</div>`;
   if(!list.length)return o+`<div class="empty">No plates match.</div>`;
   return o+`<div class="rgrid">${list.map(p=>`<div class="ticket"><div class="row"><span class="tno">${esc(p.id)}</span><span class="sp"></span><span class="chip${p.status==='scrap'?' bad':''}">${ST[p.status]||esc(p.status)}${rs.has(p.id)&&p.status==='available'?' · reserved':''}</span></div>${shapeSVG(p.shape,p.d||{})}
   <div style="font-weight:600">${esc(mName(mat(p.materialId)))} · ${esc(pDesc(p))}</div><div class="small mut">${f2(area(p))} m² · ${kg(p).toFixed(0)} kg · ${p.origin==='offcut'?`offcut from ${esc(p.fromJob||'—')}`:'bought plate'}${p.createdAt?' · '+esc(tm(p.createdAt)):''}</div>
@@ -1271,6 +1287,7 @@ document.addEventListener('click',e=>{
   else if(a==='jxls'){exportJobs()}
   else if(a==='of'){draft.of=id||'';render()}
   else if(a==='xls'){exportXls()}
+  else if(a==='xlsP'){exportPlates()}
   else if(a==='addOrder'){const od=draft.ord,L=num(od.L),W=num(od.W),n=Math.min(200,Math.max(1,Math.round(num(od.n))));
     if(!(L>0&&W>0)){setMsg('Enter the plate length and width.');render();return}
     let m=od.mid==='new'?null:mat(od.mid);
