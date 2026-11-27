@@ -968,7 +968,7 @@ function vLoginInner(){if(SRV&&srv.down)return `<div class="lgwrap"><div class="
   const A=SRV?{users:srv.setup?[]:[1],op:Object.fromEntries(Object.entries(srv.op||{}).map(([k,v])=>[k,v?{hash:'1'}:{}]))}:AUTH(),lg=draft.lg||(draft.lg={mode:''});
   if(!A.users.length)return `<div class="lgwrap">${note()}<div class="panel lgform" style="max-width:520px;margin:0 auto"><h2>First-time setup</h2><p class="mut" style="margin:4px 0 0">Create the <b>administrator</b> account. The administrator adds the planners (users) and sets the operator passwords in ⚙ Settings.</p>
     <label for="lgN">Administrator name</label><input id="lgN" data-lg="name" value="${esc(lg.name||'')}" autocomplete="username" placeholder="e.g. Ahmad">
-    <label for="lgP">Password</label><input id="lgP" type="password" data-lg="pw" value="${esc(lg.pw||'')}" autocomplete="new-password" placeholder="At least 4 characters">
+    <label for="lgP">Password</label><input id="lgP" type="password" data-lg="pw" value="${esc(lg.pw||'')}" autocomplete="new-password" placeholder="At least 6 characters">
     <label for="lgP2">Repeat password</label><input id="lgP2" type="password" data-lg="pw2" value="${esc(lg.pw2||'')}" autocomplete="new-password">
     ${SRV&&srv.setupCode?`<label for="lgC">Setup code <span class="small mut">— shown when the website was installed</span></label><input id="lgC" data-lg="code" value="${esc(lg.code||'')}" autocomplete="off" autocapitalize="characters" placeholder="e.g. K7Q2-M9XD">`:''}
     <button class="go big" style="margin-top:16px;width:100%" data-act="lgSetup">Create administrator and log in</button></div></div>`;
@@ -999,7 +999,7 @@ function vSettings(){const A=SRV?admView():AUTH(),u=me(),st=draft.st||(draft.st=
     <td><div class="row" style="justify-content:flex-end">${st.pwFor===x.id?`<input type="password" id="npw" data-st="npw" value="${esc(st.npw||'')}" placeholder="New password" style="max-width:180px" autocomplete="new-password"><button class="sm go" data-act="uPwSave" data-id="${esc(x.id)}">Save</button><button class="sm" data-act="uPw" data-id="">Cancel</button>`:`<button class="sm" data-act="uPw" data-id="${esc(x.id)}">Change password</button>`}
     ${self||lastAdm?'':`<button class="sm${armed==='u'+x.id?' arm':''}" data-act="uDel" data-id="${esc(x.id)}">${armed==='u'+x.id?'Tap again to remove':'Remove'}</button>`}</div></td></tr>`}).join('')}</tbody></table>
   <h3 style="margin-top:18px">Add a person</h3><div class="row" style="align-items:flex-end;gap:10px"><div style="flex:1;min-width:160px"><label for="stN">Name</label><input id="stN" data-st="name" value="${esc(st.name||'')}" autocomplete="off"></div>
-  <div style="flex:1;min-width:160px"><label for="stP">Password</label><input id="stP" type="password" data-st="pw" value="${esc(st.pw||'')}" autocomplete="new-password" placeholder="At least 4 characters"></div>
+  <div style="flex:1;min-width:160px"><label for="stP">Password</label><input id="stP" type="password" data-st="pw" value="${esc(st.pw||'')}" autocomplete="new-password" placeholder="At least 6 characters"></div>
   <div style="min-width:170px"><label for="stR">Role</label><select id="stR" data-st="role">${Object.entries(ROLE).map(([k,l])=>`<option value="${k}"${st.role===k?' selected':''}>${l}</option>`).join('')}</select></div><button class="go" data-act="uAdd">+ Add</button></div></div>`;
   o+=`<div class="panel"><h3>Operator passwords</h3><p class="small mut" style="margin:4px 0 10px">Operators choose <b>Cutting</b> or <b>Bending</b> and type this password. They only see the Operator page for their machines. Changing a password logs out every screen using it.</p>
   <table class="stack"><thead><tr><th>Operator</th><th>Machines</th><th>Password</th><th>New password</th></tr></thead><tbody>${Object.entries(OPK).map(([k,x])=>{const c=A.op[k];
@@ -1033,7 +1033,7 @@ async function srvAct(a,id,val){if(srvBusy)return;srvBusy=true;
     if(a==='logout'){try{await SRV.logout()}catch(e){}location.replace(location.pathname);return}
     if(a==='lgGo'){const r=await SRV.login(lg.mode==='plan'?{kind:'u',name:lg.name,pw:lg.pw}:{kind:lg.kind,pw:lg.pw});msg='';loggedIn(r.me);return}
     if(a==='lgSetup'){const n=String(lg.name||'').trim();
-      if(!n){setMsg('Type the administrator name.');render();return}if(String(lg.pw||'').length<4){setMsg('The password needs at least 4 characters.');render();return}if(lg.pw!==lg.pw2){setMsg('The two passwords are not the same.');render();return}
+      if(!n){setMsg('Type the administrator name.');render();return}if(String(lg.pw||'').length<6){setMsg('The password needs at least 6 characters.');render();return}if(lg.pw!==lg.pw2){setMsg('The two passwords are not the same.');render();return}
       const r=await SRV.setup({name:n,pw:lg.pw,code:lg.code||''});loggedIn(r.me,'#settings');setMsg('Administrator created. Now add the planners and set the operator passwords.');return}
     if(a==='uAdd'){const d=await SRV.admin('POST','/users',{name:st.name,pw:st.pw,role:st.role});const t=`${String(st.name).trim()} added as ${ROLE[st.role==='admin'?'admin':'user']}.`;draft.st={...st,name:'',pw:'',role:'user'};ok(d,t);return}
     if(a==='uPwSave'){const d=await SRV.admin('PATCH','/users/'+id,{pw:String(st.npw||'')});const t='Password changed for '+nm(id)+'.';st.pwFor='';st.npw='';ok(d,t);return}
@@ -1148,17 +1148,17 @@ document.addEventListener('click',e=>{
   if(a==='lgKind'){draft.lg.kind=id;draft.lg.pw='';render();setTimeout(()=>$('#lgP')?.focus(),0);return}
   if(a==='lgGo'){doLogin();return}
   if(a==='lgSetup'){const A=AUTH(),lg=draft.lg||{};if(A.users.length)return;const n=String(lg.name||'').trim();
-    if(!n){setMsg('Type the administrator name.');render();return}if(String(lg.pw||'').length<4){setMsg('The password needs at least 4 characters.');render();return}if(lg.pw!==lg.pw2){setMsg('The two passwords are not the same.');render();return}
+    if(!n){setMsg('Type the administrator name.');render();return}if(String(lg.pw||'').length<6){setMsg('The password needs at least 6 characters.');render();return}if(lg.pw!==lg.pw2){setMsg('The two passwords are not the same.');render();return}
     const salt=newSalt(),u={id:'U-1',name:n,role:'admin',salt,hash:pwHash(lg.pw,salt),createdAt:Date.now()};A.users.push(u);setSess({k:'u',id:u.id,h:u.hash.slice(0,16)});draft.lg={mode:''};location.hash='#settings';uSave('Administrator created. Now add the planners and set the operator passwords.');return}
   if(['uAdd','uPw','uPwSave','uDel','opPw'].includes(a)&&!isAdmin())return;
   if(a==='uAdd'){const A=AUTH(),st=draft.st,n=String(st.name||'').trim();if(!n){setMsg('Type a name.');render();return}
-    if(A.users.some(x=>normN(x.name)===normN(n))){setMsg(n+' already has a log-in.');render();return}if(String(st.pw||'').length<4){setMsg('The password needs at least 4 characters.');render();return}
+    if(A.users.some(x=>normN(x.name)===normN(n))){setMsg(n+' already has a log-in.');render();return}if(String(st.pw||'').length<6){setMsg('The password needs at least 6 characters.');render();return}
     const salt=newSalt();A.users.push({id:nextId('U-',A.users,0),name:n,role:st.role==='admin'?'admin':'user',salt,hash:pwHash(st.pw,salt),createdAt:Date.now()});draft.st={...st,name:'',pw:'',role:'user'};uSave(`${n} added as ${ROLE[st.role==='admin'?'admin':'user']}.`);return}
   if(a==='uPw'){draft.st.pwFor=id||'';draft.st.npw='';render();setTimeout(()=>$('#npw')?.focus(),0);return}
-  if(a==='uPwSave'){const A=AUTH(),x=A.users.find(y=>y.id===id),pw=String(draft.st.npw||'');if(!x)return;if(pw.length<4){setMsg('The password needs at least 4 characters.');render();return}
+  if(a==='uPwSave'){const A=AUTH(),x=A.users.find(y=>y.id===id),pw=String(draft.st.npw||'');if(!x)return;if(pw.length<6){setMsg('The password needs at least 6 characters.');render();return}
     x.salt=newSalt();x.hash=pwHash(pw,x.salt);x.pwAt=Date.now();const u=sess();if(u&&u.k==='u'&&u.id===x.id)setSess({k:'u',id:x.id,h:x.hash.slice(0,16)});draft.st.pwFor='';draft.st.npw='';uSave(`Password changed for ${x.name}.`);return}
   if(a==='uDel'){if(armed!=='u'+id){armed='u'+id;render();return}armed='';const A=AUTH(),x=A.users.find(y=>y.id===id),u=me();if(!x||x.id===u.id)return;if(x.role==='admin'&&A.users.filter(y=>y.role==='admin').length<=1)return;A.users=A.users.filter(y=>y.id!==id);uSave(`${x.name} removed.`);return}
-  if(a==='opPw'){const A=AUTH(),pw=String((draft.st.op||{})[id]||'');if(!OPK[id])return;if(pw.length<4){setMsg('The password needs at least 4 characters.');render();return}const salt=newSalt();A.op[id]={salt,hash:pwHash(pw,salt),at:Date.now()};draft.st.op[id]='';uSave(`${OPK[id].name} operator password saved.`);return}
+  if(a==='opPw'){const A=AUTH(),pw=String((draft.st.op||{})[id]||'');if(!OPK[id])return;if(pw.length<6){setMsg('The password needs at least 6 characters.');render();return}const salt=newSalt();A.op[id]={salt,hash:pwHash(pw,salt),at:Date.now()};draft.st.op[id]='';uSave(`${OPK[id].name} operator password saved.`);return}
   if(a==='bloSet'){ls.set('blo',id);applyBlo();render();return}
   if(a==='blwSet'){ls.set('blw',id);applyBlo();render();return}
   if(a==='hlcSet'){ls.set('hlc',id);applyHl();render();return}
@@ -1324,4 +1324,10 @@ else startData();
 }
 </script>
 <script>if('serviceWorker' in navigator&&isSecureContext)navigator.serviceWorker.register('sw.js').catch(()=>{})</script>
+<style>.pwbox{position:relative;display:block}.pwbox>input{padding-right:42px!important;width:100%}.pwbox>.pweye{position:absolute;right:4px;top:50%;transform:translateY(-50%);border:0;background:transparent;box-shadow:none;cursor:pointer;padding:6px;margin:0;line-height:0;color:inherit;opacity:.65;min-width:0}.pwbox>.pweye:hover{opacity:1}.pwbox>.pweye svg{width:20px;height:20px}</style>
+<script>(function(){var shown={},EYE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>',OFF='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.9 17.9A10.8 10.8 0 0 1 12 19C5 19 1 12 1 12a19.8 19.8 0 0 1 5.1-5.9M9.9 5.2A10.4 10.4 0 0 1 12 5c7 0 11 7 11 7a19.6 19.6 0 0 1-2.2 3.2M1 1l22 22"/><path d="M14.1 14.1a3 3 0 0 1-4.2-4.2"/></svg>';
+function key(i){return i.id||i.getAttribute('data-lg')||i.getAttribute('data-st')||i.getAttribute('data-sto')||''}
+function wrap(i){if(i.__pw)return;i.__pw=1;var b=document.createElement('button');b.type='button';b.className='pweye';var k=key(i);var set=function(on){i.type=on?'text':'password';b.innerHTML=on?OFF:EYE;b.title=on?'Hide password':'Show password';b.setAttribute('aria-label',b.title)};var s=document.createElement('span');s.className='pwbox';if(i.style.maxWidth){s.style.maxWidth=i.style.maxWidth;s.style.display='inline-block';s.style.width='100%'}i.parentNode.insertBefore(s,i);s.appendChild(i);s.appendChild(b);set(!!shown[k]);b.addEventListener('mousedown',function(e){e.preventDefault()});b.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();shown[k]=i.type==='password';set(shown[k]);i.focus()})}
+function scan(){var l=document.querySelectorAll('input[type=password]');for(var n=0;n<l.length;n++)wrap(l[n])}
+new MutationObserver(scan).observe(document.documentElement,{childList:true,subtree:true});document.addEventListener('DOMContentLoaded',scan);scan()})();</script>
 </body></html>
