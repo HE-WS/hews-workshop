@@ -276,7 +276,7 @@ function withBox(shape,d){const g=geom(shape,d),b=bbox(g.o||[]),o={...d};
   if(shape==='poly'){o.pts=(d.pts||[]).map(p=>[Math.round(num(p[0])-b.x),Math.round(num(p[1])-b.y)])}
   o.L=Math.round(b.L);o.W=Math.round(b.W);return o}
 const ST={available:'In stock',ordered:'On order',used:'Used',scrap:'Scrap'};
-let S={types:[],materials:[],plates:[],jobs:[],events:[],maint:{},acc:[],accLog:[],ordLog:[],auth:{users:[],op:{}}},ref=null,assets=null,dls=null,evSeen=null,myEv=new Set(),toastT=0,ac=null,zoom='',busy=0,q=Promise.resolve(),ready=false,msg='',armed='';
+let S={types:[],materials:[],plates:[],jobs:[],events:[],maint:{},acc:[],accLog:[],ordLog:[],toOrder:[],auth:{users:[],op:{}}},ref=null,assets=null,dls=null,evSeen=null,myEv=new Set(),toastT=0,ac=null,zoom='',busy=0,q=Promise.resolve(),ready=false,msg='',armed='';
 const ls={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 let opM=ls.get('opM')||'plasma';
 const draft={job:{machine:'plasma',part:'',program:'',materialId:'',plates:[],photos:[],qty:1,nlines:1,lines:[{no:'',m2:''}]},end:{jobId:''},pf:{mat:'',st:'available',or:''},sf:'',open:'',rc:{L:'',W:'',n:1,st:'available'},nt:{name:'',dens:7.85},na:{machine:'plasma',name:'',part:'',qty:'',min:'2',supplier:''},am:'',ord:{mk:'',mid:'',nt:'',L:'',W:'',n:1,sup:'',po:''},of:'',mat:{type:'Hardox',grade:'',thick:'',code:'',reorder:0,supplier:''}};
@@ -577,6 +577,8 @@ function vStock(){
   <div><label for="mco">Item code</label><input id="mco" data-dm="code" value="${esc(dm.code)}" placeholder="e.g. H500TUF-16"></div>
   <div><label for="mro">Reorder level m²</label><input id="mro" type="number" min="0" step="0.1" data-dm="reorder" value="${esc(dm.reorder)}"></div>
   <div><label for="msup">Supplier</label><input id="msup" data-dm="supplier" value="${esc(dm.supplier)}"></div><div><button class="go" data-act="addMat" style="width:100%">Add material</button></div></div><p class="small mut">Then open its Plates row to book in the plates you hold.</p></details>
+  <details class="panel" style="margin-top:12px"${draft.cimp?' open':''}><summary>Update stock from a physical count (Excel)</summary><p class="small mut" style="margin-top:8px">One block of columns per material — the material in the top row (e.g. "20 MM 500Tuf", "30 MM 450", "CCO 6/6", "Strenx 700-12 MM") with L(mm) · W(mm) · A(m²) under it, one plate per row. Sheets with "order" in the name are ignored.</p>
+  <input type="file" accept=".xlsx" data-cimpf="1" style="max-width:320px;margin-top:6px">${cimpPreview()}</details>
   <details class="panel" style="margin-top:12px"><summary>Material types (${esc(types().length)}) — add a new type</summary><p class="small mut">${types().map(t=>`${esc(t.name)} (${esc(t.dens)} kg/dm³)`).join(' · ')}</p><div class="form">
   <div><label for="ntn">New type name</label><input id="ntn" data-nt="name" value="${esc(draft.nt.name)}" placeholder="e.g. Stainless 304"></div>
   <div><label for="ntd">Density kg/dm³ (for weight)</label><input id="ntd" type="number" step="0.01" min="0" data-nt="dens" value="${esc(draft.nt.dens)}"></div>
@@ -629,9 +631,99 @@ const msort=()=>S.materials.slice().sort((a,b)=>String(a.type).localeCompare(b.t
 function orderLines(){
   const L=new Map();
   for(const p of S.plates.filter(p=>p.status==='ordered')){const m=mat(p.materialId);if(!m)continue;const k=p.line||('count|'+p.materialId+'|'+pDesc(p));
-    if(!L.has(k))L.set(k,{key:k,line:p.line||'',m,size:pDesc(p),d:p.d,date:p.orderedAt||p.createdAt,supplier:p.supplier||m.supplier||'',po:p.po||'',plates:[]});L.get(k).plates.push(p)}
-  return [...L.values()].sort((a,b)=>String(a.m.type).localeCompare(b.m.type)||byThick(a.m,b.m)||num(a.date)-num(b.date));
+    if(!L.has(k))L.set(k,{key:k,line:p.line||'',m,size:pDesc(p),d:p.d,date:p.orderedAt||p.createdAt,eta:p.eta||'',supplier:p.supplier||m.supplier||'',po:p.po||'',plates:[]});L.get(k).plates.push(p)}
+  return [...L.values()].sort((a,b)=>String(a.eta||'9').localeCompare(String(b.eta||'9'))||String(a.m.type).localeCompare(b.m.type)||String(a.m.grade||'').localeCompare(String(b.m.grade||''),undefined,{numeric:true})||byThick(a.m,b.m)||num(a.date)-num(b.date));
 }
+
+
+/* ---------- Physical count import (Excel: one block of L / W / A columns per material) ---------- */
+function countMat(h){const t=String(h||'').replace(/\s+/g,' ').trim(),l=t.toLowerCase();let m;
+  if(/cco/.test(l)&&(m=l.match(/(\d+)\s*\/\s*(\d+)/)))return {type:'CCO',grade:m[1]+'/'+m[2],thick:+m[1]+ +m[2]};
+  const th=(l.match(/(\d+(?:\.\d+)?)\s*mm/)||[])[1];if(!th)return null;
+  if(/strenx/.test(l))return {type:'Strenx',grade:(l.match(/(\d{3})\s*e?/)||[])[1]?((l.match(/(\d{3})/)||[])[1]+'E'):'700E',thick:+th};
+  const g=l.replace(/(\d+(?:\.\d+)?)\s*mm/,'').replace(/hardox/,'').trim();if(!g)return null;
+  return {type:'Hardox',grade:/tuf/.test(g)?(g.match(/\d+/)||['500'])[0]+' Tuf':g.toUpperCase(),thick:+th}}
+async function readCountSheet(file){
+  const EJ=await loadEJ(),wb=new EJ.Workbook();await wb.xlsx.load(await file.arrayBuffer());
+  const pcs=[],skipped=[];
+  for(const ws of wb.worksheets){if(/order/i.test(ws.name))continue;
+    const val=(r,c)=>{let x=ws.getRow(r).getCell(c).value;if(x&&typeof x==='object'&&!(x instanceof Date)){if('result' in x)x=x.result;else if('richText' in x)x=x.richText.map(q=>q.text).join('')}return x};
+    let lr=0;for(let r=1;r<=Math.min(ws.rowCount,10)&&!lr;r++)for(let c=1;c<=ws.columnCount;c++)if(/^l\s*\(mm\)/i.test(String(val(r,c)||'').trim())){lr=r;break}
+    if(lr<2)continue;
+    for(let c=1;c<=ws.columnCount;c++){const cl=ws.getRow(lr-1).getCell(c);if(cl.isMerged&&cl.master&&cl.master.address!==cl.address)continue;const h=String(val(lr-1,c)||'').trim();if(!h)continue;const mm=countMat(h);if(!mm){skipped.push(ws.name+': '+h);c+=2;continue}
+      for(let r=lr+1;r<=ws.rowCount;r++){const L=num(val(r,c)),W=num(val(r,c+1));if(L>0&&W>0)pcs.push({...mm,L:Math.max(L,W),W:Math.min(L,W),sheet:ws.name})}
+      c+=2}}
+  return {name:file.name,pcs,skipped}}
+function cimpPreview(){const r=draft.cimp;if(!r)return'';const rs=rset();
+  const G=new Map();for(const x of r.pcs){const k=`${x.type} ${x.grade} ${x.thick} mm`;if(!G.has(k))G.set(k,{n:0,a:0,isNew:!matFor(x.type,x.grade,x.thick,false)});const g=G.get(k);g.n++;g.a+=x.L*x.W/1e6}
+  const cur=S.plates.filter(p=>p.status==='available'),keep=cur.filter(p=>rs.has(p.id));
+  return `<div class="panel" style="border:2px solid var(--acc,#f5d000);margin-top:12px"><h3>Check before updating — ${esc(r.name)}</h3>
+  <p style="margin:8px 0">${r.pcs.length} plates · ${f2(r.pcs.reduce((x,p)=>x+p.L*p.W/1e6,0))} m² counted. This <b>deletes all ${cur.length-keep.length} plate(s) in stock now</b> and puts these in their place.${keep.length?` ${keep.length} plate(s) reserved for queued or running jobs are kept.`:''} Plates on order, used plates and scrap history are not touched.</p>
+  <table class="stack"><thead><tr><th>Material</th><th>Plates</th><th>m²</th></tr></thead><tbody>${[...G].map(([k,g])=>`<tr><td>${esc(k)}${g.isNew?' <span class="chip">new material</span>':''}</td><td class="n">${g.n}</td><td class="n">${f2(g.a)}</td></tr>`).join('')}</tbody></table>
+  ${r.skipped.length?`<p class="warn small">Columns not understood (skipped): ${r.skipped.map(esc).join(' · ')}</p>`:''}
+  <div class="row" style="margin-top:12px"><button class="go" data-act="cimpGo">Replace stock with this count</button><button data-act="cimpX">Cancel</button></div></div>`}
+function cimpApply(){const r=draft.cimp;if(!r)return;const rs=rset(),now=Date.now();
+  const del=S.plates.filter(p=>p.status==='available'&&!rs.has(p.id)),ids=new Set(del.map(p=>p.id));S.plates=S.plates.filter(p=>!ids.has(p.id));
+  let pN=S.plates.reduce((x,p)=>Math.max(x,parseInt(String(p.id).replace(/\D/g,''))||0),0);
+  for(const x of r.pcs){const m=matFor(x.type,x.grade,x.thick,true);S.plates.push({id:'P-'+(++pN),materialId:m.id,shape:'rect',d:{L:x.L,W:x.W},status:'available',origin:'purchase',createdAt:now,counted:r.name})}
+  draft.cimp=null;setMsg(`Stock replaced from ${r.name}: ${del.length} old plate(s) deleted, ${r.pcs.length} counted plate(s) added.`);save()}
+
+/* ---------- To order list + Excel order-sheet import ---------- */
+const gKey=g=>String(g||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+const etaTxt=e=>e?new Date(e+'T00:00:00').toLocaleDateString([],{day:'2-digit',month:'short',year:'numeric'}):'';
+function matFor(type,grade,thick,make){
+  const tt=String(type).trim().toLowerCase(),gk=gKey(grade),th=num(thick);
+  let ty=types().find(t=>t.name.toLowerCase()===tt);
+  let m=S.materials.find(x=>String(x.type).toLowerCase()===tt&&gKey(x.grade)===gk&&num(x.thick)===th);
+  if(m||!make)return m||null;
+  const tName=ty?ty.name:String(type).trim().replace(/\b\w/g,c=>c.toUpperCase());
+  if(!ty&&!S.types.some(t=>t.name===tName))S.types.push({name:tName,dens:7.85});
+  const sameG=S.materials.find(x=>String(x.type).toLowerCase()===tt&&gKey(x.grade)===gk);
+  m={id:nextId('M-',S.materials,0),type:tName,grade:sameG?sameG.grade:String(grade).trim(),thick:th,code:'',reorder:0,supplier:sameG?sameG.supplier||'':''};S.materials.push(m);return m}
+const toLine=t=>({...t,m:mat(t.materialId),a:num(t.L)*num(t.W)/1e6*num(t.qty)});
+async function readOrderSheet(file){
+  const EJ=await loadEJ(),wb=new EJ.Workbook();await wb.xlsx.load(await file.arrayBuffer());
+  const on=[],to=[],bad=[];let sec='on',seen=false;
+  for(const ws of wb.worksheets)ws.eachRow((row,ri)=>{
+    const v=i=>{let x=row.getCell(i).value;if(x&&typeof x==='object'){if(x instanceof Date)return x;if('result' in x)x=x.result;else if('richText' in x)x=x.richText.map(r=>r.text).join('');else if('text' in x)x=x.text}return x};
+    const c1=String(v(1)??'').trim();
+    if(/^to\s*order/i.test(c1)){sec='to';return}
+    if(/^grade$/i.test(c1)){seen=true;return}
+    if(!c1)return;
+    const th=num(v(2)),W=num(v(3)),L=num(v(4)),n=Math.round(num(v(5)));
+    if(!(th>0&&W>0&&L>0&&n>0)){bad.push(`row ${ri}: ${c1}`);return}
+    const parts=c1.split(/\s+/),type=parts.shift(),grade=parts.join(' ');
+    let eta='';const e=v(6);if(sec==='on'){if(e instanceof Date)eta=e.toISOString().slice(0,10);else if(typeof e==='string'&&/\d{4}-\d{2}-\d{2}/.test(e))eta=e.match(/\d{4}-\d{2}-\d{2}/)[0]}
+    (sec==='on'?on:to).push({type,grade,thick:th,L:Math.max(L,W),W:Math.min(L,W),n,eta})});
+  return {name:file.name,on,to,bad}}
+function oimpPreview(){const r=draft.oimp;if(!r)return'';
+  const newM=new Set();for(const x of [...r.on,...r.to])if(!matFor(x.type,x.grade,x.thick,false))newM.add(`${x.type} ${x.grade} ${x.thick} mm`);
+  const rs=rset(),cur=S.plates.filter(p=>p.status==='ordered'),keep=cur.filter(p=>rs.has(p.id)).length;
+  const nOn=r.on.reduce((x,l)=>x+l.n,0),nTo=r.to.reduce((x,l)=>x+l.n,0),aOn=r.on.reduce((x,l)=>x+l.L*l.W/1e6*l.n,0),aTo=r.to.reduce((x,l)=>x+l.L*l.W/1e6*l.n,0);
+  const etas=[...new Set(r.on.map(l=>l.eta).filter(Boolean))].sort();
+  return `<div class="panel" style="border:2px solid var(--acc,#f5d000);margin-top:12px"><h3>Check before updating — ${esc(r.name)}</h3>
+  <ul style="margin:8px 0 0 18px;line-height:1.7"><li><b>On order:</b> ${r.on.length} lines · ${nOn} plates · ${f2(aOn)} m²${etas.length?` · ETA ${etas.map(etaTxt).join(', ')}`:''}</li>
+  <li><b>To order:</b> ${r.to.length} lines · ${nTo} plates · ${f2(aTo)} m²</li>
+  <li>This <b>replaces</b> the ${cur.length} plate(s) on order now${keep?` (except ${keep} already reserved for jobs, which are kept)`:''} and the ${(S.toOrder||[]).length} line(s) in To order.</li>
+  ${newM.size?`<li>New materials that will be added: ${[...newM].map(esc).join(' · ')}</li>`:''}
+  ${r.bad.length?`<li class="warn">Skipped rows (missing size or quantity): ${r.bad.map(esc).join(' · ')}</li>`:''}</ul>
+  <div class="row" style="margin-top:12px"><button class="go" data-act="oimpGo">Update on order and to order</button><button data-act="oimpX">Cancel</button></div></div>`}
+function oimpApply(){const r=draft.oimp;if(!r)return;const now=Date.now(),rs=rset();
+  const old=S.plates.filter(p=>p.status==='ordered'&&!rs.has(p.id)),oldIds=new Set(old.map(p=>p.id));
+  if(old.length){const g=new Map();for(const p of old){const k=p.materialId+'|'+pDesc(p);if(!g.has(k))g.set(k,{p,n:0});g.get(k).n++}for(const {p,n} of g.values())ordLogAdd('cancelled',mat(p.materialId),p.d,n,{note:'replaced by '+r.name})}
+  S.plates=S.plates.filter(p=>!oldIds.has(p.id));
+  let lineN=S.plates.filter(p=>p.line).reduce((x,p)=>Math.max(x,parseInt(String(p.line).replace(/\D/g,''))||0),0),pN=S.plates.reduce((x,p)=>Math.max(x,parseInt(String(p.id).replace(/\D/g,''))||0),0);
+  for(const l of r.on){const m=matFor(l.type,l.grade,l.thick,true),line='O-'+(++lineN);
+    for(let i=0;i<l.n;i++)S.plates.push({id:'P-'+(++pN),materialId:m.id,shape:'rect',d:{L:l.L,W:l.W},status:'ordered',origin:'purchase',line,orderedAt:now,createdAt:now,eta:l.eta||'',supplier:m.supplier||'',po:''});
+    ordLogAdd('ordered',m,{L:l.L,W:l.W},l.n,{note:'from '+r.name})}
+  let tN=0;S.toOrder=r.to.map(l=>{const m=matFor(l.type,l.grade,l.thick,true);return {id:'T-'+(++tN),materialId:m.id,L:l.L,W:l.W,qty:l.n,at:now}});
+  draft.oimp=null;setMsg(`Updated from ${r.name}: ${r.on.reduce((x,l)=>x+l.n,0)} plates on order, ${r.to.reduce((x,l)=>x+l.n,0)} plates to order.`);save()}
+function toOrderHtml(){const T=(S.toOrder||[]).map(toLine).filter(t=>t.m).sort((a,b)=>String(a.m.type).localeCompare(b.m.type)||String(a.m.grade||'').localeCompare(String(b.m.grade||''),undefined,{numeric:true})||byThick(a.m,b.m));
+  let o=`<h3 style="margin:26px 0 6px">To order <span class="small mut">— planned, not ordered yet</span></h3>`;
+  if(!T.length)return o+`<div class="empty">Nothing waiting to be ordered.</div>`;
+  const kgT=t=>t.a*num(t.m.thick)*dens(t.m.type);
+  return o+`<table class="stack"><thead><tr><th>Material</th><th>Item code</th><th>Thickness</th><th>Size mm</th><th>Qty</th><th>m²</th><th>Weight kg</th><th></th></tr></thead><tbody>${T.map(t=>`<tr><td>${esc((t.m.type+' '+(t.m.grade||'')).trim())}</td><td>${esc(t.m.code||'—')}</td><td class="n">${esc(t.m.thick)} mm</td><td class="n">${esc(t.L)}×${esc(t.W)}</td><td class="n">${esc(t.qty)}</td><td class="n">${f2(t.a)}</td><td class="n">${Math.round(kgT(t)).toLocaleString()}</td><td><div class="row"><button class="sm go" data-act="toOrd" data-id="${esc(t.id)}">Ordered</button><button class="sm${armed==='t'+t.id?' arm':''}" data-act="toDel" data-id="${esc(t.id)}">${armed==='t'+t.id?'Sure?':'Remove'}</button></div></td></tr>`).join('')}
+  <tr class="grp"><th colspan="4">Total to order</th><th class="n">${T.reduce((x,t)=>x+num(t.qty),0)}</th><th class="n">${f2(T.reduce((x,t)=>x+t.a,0))}</th><th class="n">${Math.round(T.reduce((x,t)=>x+kgT(t),0)).toLocaleString()}</th><th></th></tr></tbody></table>`}
 function vOrder(){
   const od=draft.ord,srt=msort(),keys=[...new Set(srt.map(mk))];
   if(!keys.includes(od.mk))od.mk=keys.find(k=>k.startsWith('Hardox'))||keys[0]||'';
@@ -649,12 +741,14 @@ function vOrder(){
   <div><label for="oS">Supplier</label><input id="oS" data-od="sup" value="${esc(od.sup)}"></div>
   <div><label for="oP">Order / PO no.</label><input id="oP" data-od="po" value="${esc(od.po)}"></div>
   <div><button class="go" data-act="addOrder" style="width:100%">Add to order</button></div></div>
-  <p class="small mut" id="oPrev">${ordPrev()}</p></div>`;
-  o+=`<div class="row" style="margin-bottom:12px"><button class="sm${of?'':' on'}" data-act="of" data-id="">All</button>${tn.map(t=>`<button class="sm${of===t?' on':''}" data-act="of" data-id="${esc(t)}">${esc(t)}</button>`).join('')}<span class="sp"></span>${dls&&lines.length?`<button class="go" data-act="xls">Export to Excel</button>`:''}</div>`;
-  if(!lines.length)return o+`<div class="empty">Nothing on order${of?' for '+esc(of):''}.</div>`;
-  o+=`<table class="stack"><thead><tr><th>Date</th><th>Item code</th><th>Material</th><th>Thickness</th><th>Size mm</th><th>Qty</th><th>m²</th><th>Weight kg</th><th>Supplier / PO</th><th></th></tr></thead><tbody>${lines.map(l=>`<tr><td>${esc(l.date?new Date(l.date).toLocaleDateString():'')}</td><td>${esc(l.m.code||'—')}</td><td>${esc((l.m.type+' '+(l.m.grade||'')).trim())}</td><td class="n">${esc(l.m.thick)} mm</td><td class="n">${esc(l.size)}</td><td class="n">${l.plates.length}</td><td class="n">${f2(sumA(l.plates))}</td><td class="n">${Math.round(l.plates.reduce((x,p)=>x+kg(p),0)).toLocaleString()}</td><td>${esc([l.supplier,l.po].filter(Boolean).join(' · ')||'—')}</td><td><div class="row"><button class="sm" data-act="arrOne" data-id="${esc(l.key)}">1 arrived</button><button class="sm" data-act="arrAll" data-id="${esc(l.key)}">All arrived</button><button class="sm${armed==='c'+l.key?' arm':''}" data-act="cancelLine" data-id="${esc(l.key)}">${armed==='c'+l.key?'Sure?':'Cancel'}</button></div></td></tr>`).join('')}
+  <p class="small mut" id="oPrev">${ordPrev()}</p></div>
+  <details class="panel" style="margin-bottom:22px"${draft.oimp?' open':''}><summary>Update from an Excel order sheet</summary><p class="small mut" style="margin-top:8px">Columns: Grade · Thickness (mm) · Width (mm) · Length (mm) · PCS · ETA. Lines under a row that says <b>To order</b> go to the To order list. Grade is written like "HARDOX 500TUF" or "STRENX 700 E".</p>
+  <label class="sm" style="display:inline-block;margin-top:6px"><input type="file" accept=".xlsx" data-oimpf="1" style="max-width:320px"></label>${oimpPreview()}</details>`;
+  o+=`<div class="row" style="margin-bottom:12px"><button class="sm${of?'':' on'}" data-act="of" data-id="">All</button>${tn.map(t=>`<button class="sm${of===t?' on':''}" data-act="of" data-id="${esc(t)}">${esc(t)}</button>`).join('')}<span class="sp"></span>${dls&&(lines.length||(S.toOrder||[]).length)?`<button class="go" data-act="xls">Export to Excel</button>`:''}</div>`;
+  if(!lines.length)return o+`<div class="empty">Nothing on order${of?' for '+esc(of):''}.</div>`+toOrderHtml();
+  o+=`<table class="stack"><thead><tr><th>ETA</th><th>Item code</th><th>Material</th><th>Thickness</th><th>Size mm</th><th>Qty</th><th>m²</th><th>Weight kg</th><th>Supplier / PO</th><th></th></tr></thead><tbody>${lines.map(l=>`<tr><td>${esc(etaTxt(l.eta)||'—')}</td><td>${esc(l.m.code||'—')}</td><td>${esc((l.m.type+' '+(l.m.grade||'')).trim())}</td><td class="n">${esc(l.m.thick)} mm</td><td class="n">${esc(l.size)}</td><td class="n">${l.plates.length}</td><td class="n">${f2(sumA(l.plates))}</td><td class="n">${Math.round(l.plates.reduce((x,p)=>x+kg(p),0)).toLocaleString()}</td><td>${esc([l.supplier,l.po].filter(Boolean).join(' · ')||'—')}</td><td><div class="row"><button class="sm" data-act="arrOne" data-id="${esc(l.key)}">1 arrived</button><button class="sm" data-act="arrAll" data-id="${esc(l.key)}">All arrived</button><button class="sm${armed==='c'+l.key?' arm':''}" data-act="cancelLine" data-id="${esc(l.key)}">${armed==='c'+l.key?'Sure?':'Cancel'}</button></div></td></tr>`).join('')}
   <tr class="grp"><th colspan="5">Total on order</th><th class="n">${tQ}</th><th class="n">${f2(tA)}</th><th class="n">${Math.round(tK).toLocaleString()}</th><th colspan="2"></th></tr></tbody></table>`;
-  return o;
+  return o+toOrderHtml();
 }
 function ordPrev(){const od=draft.ord,L=num(od.L),W=num(od.W),n=Math.max(1,Math.round(num(od.n)));const m=od.mid==='new'?{thick:num(od.nt),type:(od.mk||'').split('|')[0]}:mat(od.mid);if(!(L>0&&W>0)||!m)return 'Enter length and width to see area and weight.';const a=L*W/1e6*n;return `${n} × ${L}×${W} = ${a.toFixed(2)} m² · about ${Math.round(a*num(m.thick)*dens(m.type)).toLocaleString()} kg`}
 
@@ -810,9 +904,12 @@ const xErr=e=>{if(e&&e.code==='declined')return;setMsg('Could not export: '+(e&&
 
 async function exportXls(){try{
   const of=draft.of,lines=orderLines().filter(l=>!of||l.m.type===of),today=dayKey(Date.now());
-  const rows=lines.map(l=>({v:[l.m.code||'',l.m.type,l.m.grade||'',num(l.m.thick),num(l.d?.L),num(l.d?.W),l.plates.length,+sumA(l.plates).toFixed(3),Math.round(l.plates.reduce((x,p)=>x+kg(p),0)),l.supplier||'',l.po||'',isoDay(l.date)]}));
-  rows.push({k:'total',v:['TOTAL ON ORDER','','','','','',lines.reduce((x,l)=>x+l.plates.length,0),+lines.reduce((x,l)=>x+sumA(l.plates),0).toFixed(3),Math.round(lines.reduce((x,l)=>x+l.plates.reduce((y,p)=>y+kg(p),0),0)),'','','']});
-  await xbook(`Plate order ${of?of+' ':''}${today}.xlsx`,[{name:'Plate order',title:'Plate order'+(of?' — '+of:''),cols:[{h:'Item code',w:16},{h:'Material',w:12},{h:'Grade',w:10},{h:'Thickness (mm)',w:11,f:'int'},{h:'Length (mm)',w:11,f:'int'},{h:'Width (mm)',w:11,f:'int'},{h:'Qty (plates)',w:10,f:'int'},{h:'Area (m²)',w:11,f:'m2'},{h:'Weight (kg)',w:12,f:'kg'},{h:'Supplier',w:18},{h:'Order / PO no.',w:16},{h:'Date added',w:12}],rows}]);
+  const rows=lines.map(l=>({v:[l.eta||'',l.m.code||'',l.m.type,l.m.grade||'',num(l.m.thick),num(l.d?.L),num(l.d?.W),l.plates.length,+sumA(l.plates).toFixed(3),Math.round(l.plates.reduce((x,p)=>x+kg(p),0)),l.supplier||'',l.po||'',isoDay(l.date)]}));
+  rows.push({k:'total',v:['TOTAL ON ORDER','','','','','','',lines.reduce((x,l)=>x+l.plates.length,0),+lines.reduce((x,l)=>x+sumA(l.plates),0).toFixed(3),Math.round(lines.reduce((x,l)=>x+l.plates.reduce((y,p)=>y+kg(p),0),0)),'','','']});
+  const T=(S.toOrder||[]).map(toLine).filter(t=>t.m&&(!of||t.m.type===of)),tr=T.map(t=>({v:[t.m.code||'',t.m.type,t.m.grade||'',num(t.m.thick),num(t.L),num(t.W),num(t.qty),+t.a.toFixed(3),Math.round(t.a*num(t.m.thick)*dens(t.m.type))]}));
+  if(T.length)tr.push({k:'total',v:['TOTAL TO ORDER','','','','','',T.reduce((x,t)=>x+num(t.qty),0),+T.reduce((x,t)=>x+t.a,0).toFixed(3),Math.round(T.reduce((x,t)=>x+t.a*num(t.m.thick)*dens(t.m.type),0))]});
+  await xbook(`Plate order ${of?of+' ':''}${today}.xlsx`,[{name:'On order',title:'Plates on order'+(of?' — '+of:''),cols:[{h:'ETA',w:12},{h:'Item code',w:16},{h:'Material',w:12},{h:'Grade',w:10},{h:'Thickness (mm)',w:11,f:'int'},{h:'Length (mm)',w:11,f:'int'},{h:'Width (mm)',w:11,f:'int'},{h:'Qty (plates)',w:10,f:'int'},{h:'Area (m²)',w:11,f:'m2'},{h:'Weight (kg)',w:12,f:'kg'},{h:'Supplier',w:18},{h:'Order / PO no.',w:16},{h:'Date added',w:12}],rows},
+    {name:'To order',title:'Plates to order'+(of?' — '+of:''),cols:[{h:'Item code',w:16},{h:'Material',w:12},{h:'Grade',w:10},{h:'Thickness (mm)',w:11,f:'int'},{h:'Length (mm)',w:11,f:'int'},{h:'Width (mm)',w:11,f:'int'},{h:'Qty (plates)',w:10,f:'int'},{h:'Area (m²)',w:11,f:'m2'},{h:'Weight (kg)',w:12,f:'kg'}],rows:tr}]);
   setMsg('Excel order saved.');render()}catch(e){xErr(e)}}
 
 async function exportJobs(){try{
@@ -1013,6 +1110,7 @@ function vSettings(){const A=SRV?admView():AUTH(),u=me(),st=draft.st||(draft.st=
   <table class="stack"><thead><tr><th>Name</th><th>Role</th><th>Added</th><th></th></tr></thead><tbody>${A.users.map(x=>{const self=x.id===u.id,lastAdm=x.role==='admin'&&nAdm<=1;
     return `<tr><td><b>${esc(x.name)}</b>${self?' <span class="small mut">(you)</span>':''}</td><td>${lastAdm?`<span class="role adm">Administrator</span>`:`<select data-urole="${esc(x.id)}" aria-label="Role for ${esc(x.name)}">${Object.entries(ROLE).map(([k,l])=>`<option value="${k}"${x.role===k?' selected':''}>${l}</option>`).join('')}</select>`}</td><td class="small">${dt(x.createdAt)}</td>
     <td><div class="row" style="justify-content:flex-end">${st.pwFor===x.id?`<input type="password" id="npw" data-st="npw" value="${esc(st.npw||'')}" placeholder="New password" style="max-width:180px" autocomplete="new-password"><button class="sm go" data-act="uPwSave" data-id="${esc(x.id)}">Save</button><button class="sm" data-act="uPw" data-id="">Cancel</button>`:`<button class="sm" data-act="uPw" data-id="${esc(x.id)}">Change password</button>`}
+    ${SRV&&!self?`<button class="sm" data-act="uOut" data-id="${esc(x.id)}" title="Log ${esc(x.name)} out on every device">Log out</button>`:''}
     ${self||lastAdm?'':`<button class="sm${armed==='u'+x.id?' arm':''}" data-act="uDel" data-id="${esc(x.id)}">${armed==='u'+x.id?'Tap again to remove':'Remove'}</button>`}</div></td></tr>`}).join('')}</tbody></table>
   <h3 style="margin-top:18px">Add a person</h3><div class="row" style="align-items:flex-end;gap:10px"><div style="flex:1;min-width:160px"><label for="stN">Name</label><input id="stN" data-st="name" value="${esc(st.name||'')}" autocomplete="off"></div>
   <div style="flex:1;min-width:160px"><label for="stP">Password</label><input id="stP" type="password" data-st="pw" value="${esc(st.pw||'')}" autocomplete="new-password" placeholder="At least 6 characters"></div>
@@ -1020,7 +1118,7 @@ function vSettings(){const A=SRV?admView():AUTH(),u=me(),st=draft.st||(draft.st=
   o+=`<div class="panel"><h3>Operator passwords</h3><p class="small mut" style="margin:4px 0 10px">Operators choose <b>Cutting</b> or <b>Bending</b> and type this password. They only see the Operator page for their machines. Changing a password logs out every screen using it.</p>
   <table class="stack"><thead><tr><th>Operator</th><th>Machines</th><th>Password</th><th>New password</th></tr></thead><tbody>${Object.entries(OPK).map(([k,x])=>{const c=A.op[k];
     return `<tr><td><b>${x.name}</b></td><td class="small">${x.sub}</td><td>${c&&c.hash?`<span class="chip ok">Set</span> <span class="small mut">${dt(c.at)}</span>`:'<span class="chip" style="background:#fde2e0;color:#a61b0f">Not set</span>'}</td>
-    <td><div class="row"><input type="password" id="op_${k}" data-sto="${k}" value="${esc((st.op||{})[k]||'')}" placeholder="New password" style="max-width:200px" autocomplete="new-password"><button class="sm go" data-act="opPw" data-id="${k}">Save</button></div></td></tr>`}).join('')}</tbody></table></div>`;
+    <td><div class="row"><input type="password" id="op_${k}" data-sto="${k}" value="${esc((st.op||{})[k]||'')}" placeholder="New password" style="max-width:200px" autocomplete="new-password"><button class="sm go" data-act="opPw" data-id="${k}">Save</button>${SRV&&c&&(c.hash||c.set)?`<button class="sm" data-act="opOut" data-id="${k}" title="Log out every screen using the ${x.name} password">Log out</button>`:''}</div></td></tr>`}).join('')}</tbody></table>${SRV?`<p class="small mut" style="margin-top:8px"><b>Log out</b> signs that person or operator screen out on every device within about a minute. They can log in again with their password; change the password if they should not.</p>`:''}</div>`;
   if(window.HE_IMPORT)o+=`<div class="panel"><h3>Bring in data from the workshop server</h3><p class="small mut" style="margin:4px 0 10px">Moving from the WiFi website? Choose the file <b>data\\state.json</b> from the old website folder. Jobs, stock, plates, accessories and history are copied here; log-ins are not (create them above). <b>This replaces the data on this website.</b></p>
     ${draft.imp?`<div class="warn">Ready to import: ${esc(draft.imp.sum)}</div><div class="row" style="margin-top:8px"><button class="go" data-act="impGo">${armed==='imp'?'Tap again to replace the data':'Import now'}</button><button data-act="impX">Cancel</button></div>`:`<label class="upl">📂 Choose state.json<input type="file" accept=".json,application/json" data-imp="1"></label>`}</div>`;
   o+=`<div class="panel"><h3>Good to know</h3><ul class="small" style="margin:6px 0 0;padding-left:18px;line-height:1.6"><li>Each screen stays logged in until someone presses <b>Log out</b> (top right).</li><li>Removing a person or changing a password logs that person out at once.</li><li>The style (wallpaper, blocks, header line) is still chosen per screen.</li></ul></div>`;
@@ -1053,6 +1151,8 @@ async function srvAct(a,id,val){if(srvBusy)return;srvBusy=true;
       const r=await SRV.setup({name:n,pw:lg.pw,code:lg.code||''});loggedIn(r.me,'#settings');setMsg('Administrator created. Now add the planners and set the operator passwords.');return}
     if(a==='uAdd'){const d=await SRV.admin('POST','/users',{name:st.name,pw:st.pw,role:st.role});const t=`${String(st.name).trim()} added as ${ROLE[st.role==='admin'?'admin':'user']}.`;draft.st={...st,name:'',pw:'',role:'user'};ok(d,t);return}
     if(a==='uPwSave'){const d=await SRV.admin('PATCH','/users/'+id,{pw:String(st.npw||'')});const t='Password changed for '+nm(id)+'.';st.pwFor='';st.npw='';ok(d,t);return}
+    if(a==='uOut'){await SRV.admin('POST','/users/'+id+'/logout');setMsg(nm(id)+' will be logged out on every device within a minute.');render();return}
+    if(a==='opOut'){await SRV.admin('POST','/op/'+id+'/logout');setMsg(`Every ${OPK[id].name} operator screen will be logged out within a minute.`);render();return}
     if(a==='uDel'){const t=nm(id)+' removed.';const d=await SRV.admin('DELETE','/users/'+id);ok(d,t);return}
     if(a==='urole'){const d=await SRV.admin('PATCH','/users/'+id,{role:val});ok(d,`${nm(id)} is now ${ROLE[val==='admin'?'admin':'user']}.`);return}
     if(a==='opPw'){const d=await SRV.admin('PUT','/op/'+id,{pw:String((st.op||{})[id]||'')});(st.op||(st.op={}))[id]='';ok(d,`${OPK[id].name} operator password saved.`);return}
@@ -1103,6 +1203,8 @@ document.addEventListener('change',e=>{
   const t=e.target,d=t.dataset;
   if(d.bd!=null&&d.k){const p=draft.end.pieces[+d.bd];if(p){p.board={...(p.board||{}),[d.k]:Math.max(100,num(t.value))};render()}}
   else if(d.pt!=null){const p=draft.end.pieces[+d.pt];if(p&&p.d.pts&&p.d.pts[+d.n]){p.d.pts[+d.n][+d.c]=Math.max(0,Math.round(num(t.value)));p.ptsOpen=true;render()}}
+  if(d.cimpf&&t.files&&t.files[0]){const f=t.files[0];t.value='';readCountSheet(f).then(r=>{if(!r.pcs.length){setMsg('No plates found in that sheet. Each material needs L(mm) and W(mm) columns under its name.');draft.cimp=null}else draft.cimp=r;render()}).catch(e=>{setMsg('Could not read that Excel file: '+(e&&e.message||'error'));render()});return}
+  if(d.oimpf&&t.files&&t.files[0]){const f=t.files[0];t.value='';readOrderSheet(f).then(r=>{if(!r.on.length&&!r.to.length){setMsg('No plate lines found in that sheet. Check the columns: Grade, Thickness, Width, Length, PCS, ETA.');draft.oimp=null}else draft.oimp=r;render()}).catch(e=>{setMsg('Could not read that Excel file: '+(e&&e.message||'error'));render()});return}
   if(d.imp&&t.files&&t.files[0]){const f=t.files[0];t.value='';f.text().then(txt=>{let j;try{j=JSON.parse(txt)}catch(e){setMsg('That file is not a valid state.json.');render();return}
       if(!j||!Array.isArray(j.materials)||!Array.isArray(j.plates)){setMsg('That file does not look like the workshop data (state.json).');render();return}
       delete j.auth;delete j._seeded;draft.imp={data:j,sum:`${(j.materials||[]).length} materials, ${(j.plates||[]).length} plates, ${(j.jobs||[]).length} jobs, ${(j.acc||[]).length} accessories`};render()});return}
@@ -1155,7 +1257,7 @@ document.addEventListener('click',e=>{
   if(a==='wgrp'){draft.wgrp=id;render();return}
   if(a==='styReset'){if(armed!=='styReset'){armed='styReset';render();return}armed='';['wp','blk','hl','hlc','blo','blw'].forEach(k=>ls.set(k,''));applyWp();applyBlk();applyBlo();applyHl();render();return}
   if(a==='lgRetry'&&SRV){location.reload();return}
-  if(SRV&&['logout','lgGo','lgSetup','uAdd','uPwSave','uDel','opPw'].includes(a)){
+  if(SRV&&['logout','lgGo','lgSetup','uAdd','uPwSave','uDel','opPw','uOut','opOut'].includes(a)){
     if(a==='uDel'){if(armed!=='u'+id){armed='u'+id;render();return}armed=''}
     if(a!=='logout'&&a!=='lgGo'&&a!=='lgSetup'&&!isAdmin())return;
     srvAct(a,id);return}
@@ -1288,6 +1390,14 @@ document.addEventListener('click',e=>{
   else if(a==='of'){draft.of=id||'';render()}
   else if(a==='xls'){exportXls()}
   else if(a==='xlsP'){exportPlates()}
+  else if(a==='oimpGo'){oimpApply()}
+  else if(a==='cimpGo'){cimpApply()}
+  else if(a==='cimpX'){draft.cimp=null;render()}
+  else if(a==='oimpX'){draft.oimp=null;render()}
+  else if(a==='toDel'){if(armed!=='t'+id){armed='t'+id;render();return}S.toOrder=(S.toOrder||[]).filter(t=>t.id!==id);armed='';save()}
+  else if(a==='toOrd'){const t=(S.toOrder||[]).find(x=>x.id===id),m=t&&mat(t.materialId);if(!m)return;const now=Date.now(),line=nextId('O-',S.plates.filter(p=>p.line).map(p=>({id:p.line})),0);let pN=S.plates.reduce((x,p)=>Math.max(x,parseInt(String(p.id).replace(/\D/g,''))||0),0);
+    for(let i=0;i<num(t.qty);i++)S.plates.push({id:'P-'+(++pN),materialId:m.id,shape:'rect',d:{L:num(t.L),W:num(t.W)},status:'ordered',origin:'purchase',line,orderedAt:now,createdAt:now,eta:'',supplier:m.supplier||'',po:''});
+    ordLogAdd('ordered',m,{L:t.L,W:t.W},num(t.qty));S.toOrder=S.toOrder.filter(x=>x.id!==id);setMsg(`${t.qty} plate(s) of ${mName(m)} ${t.L}×${t.W} moved to On order.`);save()}
   else if(a==='addOrder'){const od=draft.ord,L=num(od.L),W=num(od.W),n=Math.min(200,Math.max(1,Math.round(num(od.n))));
     if(!(L>0&&W>0)){setMsg('Enter the plate length and width.');render();return}
     let m=od.mid==='new'?null:mat(od.mid);
@@ -1327,7 +1437,7 @@ async function startData(){
     if(!s.metadata.fromCache)clearTimeout(t);
     const d=s.exists?JSON.parse(JSON.stringify(s.data())):{};
     const A=k=>Array.isArray(d[k])?d[k]:[];
-    S={types:A('types'),materials:A('materials'),plates:A('plates'),jobs:A('jobs'),events:A('events'),maint:d.maint&&typeof d.maint==='object'&&!Array.isArray(d.maint)?d.maint:{},acc:A('acc'),accLog:A('accLog'),ordLog:A('ordLog'),auth:d.auth&&typeof d.auth==='object'&&!Array.isArray(d.auth)?d.auth:{users:[],op:{}}};
+    S={types:A('types'),materials:A('materials'),plates:A('plates'),jobs:A('jobs'),events:A('events'),maint:d.maint&&typeof d.maint==='object'&&!Array.isArray(d.maint)?d.maint:{},acc:A('acc'),accLog:A('accLog'),ordLog:A('ordLog'),toOrder:A('toOrder'),auth:d.auth&&typeof d.auth==='object'&&!Array.isArray(d.auth)?d.auth:{users:[],op:{}}};
     const mx=S.events.reduce((x,e)=>Math.max(x,num(e.t)),0);
     if(evSeen==null)evSeen=mx;else{const nw=S.events.filter(e=>num(e.t)>evSeen&&!myEv.has(e.id));evSeen=Math.max(evSeen,mx);const al=nw.filter(evOn),u=me();if(al.length&&u&&u.role!=='op'){const last=al[al.length-1];beep(last.type);toast(last)}}
     ready=true;render();
@@ -1340,11 +1450,11 @@ if(SRV)srvHello();
 else startData();
 }
 </script>
-<script>if('serviceWorker' in navigator&&isSecureContext)navigator.serviceWorker.register('sw.js').catch(()=>{})</script>
 <style>.pwbox{position:relative;display:block}.pwbox>input{padding-right:42px!important;width:100%}.pwbox>.pweye{position:absolute;right:4px;top:50%;transform:translateY(-50%);border:0;background:transparent;box-shadow:none;cursor:pointer;padding:6px;margin:0;line-height:0;color:inherit;opacity:.65;min-width:0}.pwbox>.pweye:hover{opacity:1}.pwbox>.pweye svg{width:20px;height:20px}</style>
 <script>(function(){var shown={},EYE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>',OFF='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.9 17.9A10.8 10.8 0 0 1 12 19C5 19 1 12 1 12a19.8 19.8 0 0 1 5.1-5.9M9.9 5.2A10.4 10.4 0 0 1 12 5c7 0 11 7 11 7a19.6 19.6 0 0 1-2.2 3.2M1 1l22 22"/><path d="M14.1 14.1a3 3 0 0 1-4.2-4.2"/></svg>';
 function key(i){return i.id||i.getAttribute('data-lg')||i.getAttribute('data-st')||i.getAttribute('data-sto')||''}
 function wrap(i){if(i.__pw)return;i.__pw=1;var b=document.createElement('button');b.type='button';b.className='pweye';var k=key(i);var set=function(on){i.type=on?'text':'password';b.innerHTML=on?OFF:EYE;b.title=on?'Hide password':'Show password';b.setAttribute('aria-label',b.title)};var s=document.createElement('span');s.className='pwbox';if(i.style.maxWidth){s.style.maxWidth=i.style.maxWidth;s.style.display='inline-block';s.style.width='100%'}i.parentNode.insertBefore(s,i);s.appendChild(i);s.appendChild(b);set(!!shown[k]);b.addEventListener('mousedown',function(e){e.preventDefault()});b.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();shown[k]=i.type==='password';set(shown[k]);i.focus()})}
 function scan(){var l=document.querySelectorAll('input[type=password]');for(var n=0;n<l.length;n++)wrap(l[n])}
 new MutationObserver(scan).observe(document.documentElement,{childList:true,subtree:true});document.addEventListener('DOMContentLoaded',scan);scan()})();</script>
+<script>if('serviceWorker' in navigator&&isSecureContext)navigator.serviceWorker.register('sw.js').catch(()=>{})</script>
 </body></html>

@@ -100,7 +100,11 @@
     async logout() { wasIn = false; if (sb) await sb.auth.signOut({ scope: 'local' }); return { ok: true }; },
     async admin(method, path, body) {
       if (path === '/users') return fn(USERS[method], body);
-      let m = /^\/users\/(.+)$/.exec(path);
+      let m = /^\/users\/(.+)\/logout$/.exec(path);
+      if (m) return fn('logout', { id: m[1] });
+      m = /^\/op\/(cut|bend)\/logout$/.exec(path);
+      if (m) return fn('oplogout', { kind: m[1] });
+      m = /^\/users\/(.+)$/.exec(path);
       if (m) {
         if (method === 'DELETE') return fn('remove', { id: m[1] });
         if (body && body.role) return fn('role', { id: m[1], role: body.role });
