@@ -35,6 +35,7 @@ h2{font-size:32px;margin-bottom:6px}h3{font-size:22px}
 .tno{font-family:"Barlow Condensed","Arial Narrow","Roboto Condensed","Segoe UI",Arial,sans-serif;font-weight:700;font-size:22px}
 .chip{display:inline-block;font-size:13px;font-weight:600;padding:2px 9px;border-radius:99px;background:var(--line);white-space:nowrap}
 .chip.qpos{display:inline-flex;align-items:center;gap:2px;cursor:pointer;border-color:var(--acc,#f5c400)!important}.chip.qpos select{appearance:auto;background:transparent;border:0;color:inherit;font:inherit;font-weight:700;padding:0 2px;margin:0;width:auto;min-height:0;height:auto;cursor:pointer;box-shadow:none}.chip.qpos select option{color:#111}
+.ticket.cmp{padding-top:10px;padding-bottom:10px}.ticket.cmp .tno{font-size:1.05em}
 .chip.run{background:var(--run);color:var(--card)}.chip.bad{background:var(--bad);color:#fff}.chip.ok{background:transparent;border:1px solid var(--line)}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .sp{flex:1}
@@ -429,8 +430,11 @@ function vPlan(){
   for(const m of MACH){
     const run=S.jobs.filter(j=>j.machine===m.id&&j.status==='running'),qd=S.jobs.filter(j=>j.machine===m.id&&j.status==='queued').sort(bySeq);
     const mo=(S.maint||{})[m.id];
-    o+=`<section class="col"><div class="colh"><h3>${m.name}</h3><span class="mut small">${m.sw?m.sw+' · ':''}${qd.length} waiting</span></div>${mo&&mo.on?`<div class="mbar">🔧 MAINTENANCE since ${esc(new Date(mo.since).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}))}<span class="sp"></span><button class="mt" data-act="maint" data-id="${m.id}">Turn off</button></div>`:`<div style="margin-bottom:10px"><button class="mt" data-act="maint" data-id="${m.id}">🔧 Maintenance</button></div>`}`;
-    o+=run.map(j=>ticket(j,-1,0)).join('')+qd.map((j,i)=>ticket(j,i,qd.length)).join('');
+    const hj=hid('jobs_'+m.id),hd=hid('det_'+m.id),nj=run.length+qd.length;
+    o+=`<section class="col"><div class="colh"><h3>${m.name}</h3><span class="mut small">${m.sw?m.sw+' · ':''}${qd.length} waiting</span></div>
+    <div class="row" style="gap:6px;margin:-4px 0 10px">${nj?`<button class="sm hb" data-act="hideBlk" data-id="jobs_${m.id}" aria-expanded="${hj?'false':'true'}">${hj?`Show jobs (${nj})`:'Hide jobs'}</button>`:''}${nj&&!hj?`<button class="sm hb" data-act="hideBlk" data-id="det_${m.id}" aria-expanded="${hd?'false':'true'}">${hd?'Show details':'Hide details'}</button>`:''}</div>${mo&&mo.on?`<div class="mbar">🔧 MAINTENANCE since ${esc(new Date(mo.since).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}))}<span class="sp"></span><button class="mt" data-act="maint" data-id="${m.id}">Turn off</button></div>`:`<div style="margin-bottom:10px"><button class="mt" data-act="maint" data-id="${m.id}">🔧 Maintenance</button></div>`}`;
+    if(hj)o+=`<div class="empty small" style="padding:12px">${run.length?`${esc(run.map(j=>j.id).join(', '))} running · `:''}${qd.length} waiting — jobs hidden</div>`;
+    else o+=run.map(j=>ticket(j,-1,0,hd)).join('')+qd.map((j,i)=>ticket(j,i,qd.length,hd)).join('');
     if(!run.length&&!qd.length)o+=`<div class="empty">Nothing queued</div>`;
     o+=doneBox(m);
     o+='</section>';
@@ -498,10 +502,12 @@ function jobNoGrid(dj,isBend){const n=fitLines(dj),lw=dj.lmode==='lw';
   <p class="small mut" id="jlTot">${m2Txt(dj)}</p></div>`}
 function m2Txt(dj){const t=(dj.lines||[]).reduce((x,l)=>x+num(l.m2),0),ps=(dj.plates||[]).map(plate).filter(Boolean);return t?`Total in table: ${f2(t)} m²${ps.length?` · plates selected: ${f2(sumA(ps))} m²`:''}`:''}
 const nosTxt=j=>(j.lines||[]).map(l=>l.no+(num(l.m2)?' ('+f2(l.m2)+' m²)':'')).join(', ');
-function ticket(j,i,n){
+function ticket(j,i,n,cmp){
   const m=mat(j.materialId),run=j.status==='running',ps=(j.plates||[]).map(plate);
   let w='';if(m&&!isForm(j.machine)){if(!ps.length)w='No plate assigned — stock short';else if(ps.some(p=>!p||p.status!=='available'))w='A plate on this job is no longer in stock'}
-  let o=`<div class="ticket${run?' run':''}"><div class="row"><span class="tno">${esc(j.id)}</span><span class="sp"></span>${run?`<span class="chip run pulse">Running · ${esc(j.operator||'')}</span>${j.gas?' '+gasChip(j):''}`:(n>1?`<label class="chip ok qpos" title="Choose a new place in the queue">#<select data-qpos="${esc(j.id)}" aria-label="Place in line for ${esc(j.id)}">${Array.from({length:n},(_,k)=>`<option value="${k+1}"${k===i?' selected':''}>${k+1}</option>`).join('')}</select> in line</label>`:`<span class="chip ok">#${i+1} in line</span>`)}</div>
+  const chip=run?`<span class="chip run pulse">Running · ${esc(j.operator||'')}</span>${j.gas?' '+gasChip(j):''}`:(n>1?`<label class="chip ok qpos" title="Choose a new place in the queue">#<select data-qpos="${esc(j.id)}" aria-label="Place in line for ${esc(j.id)}">${Array.from({length:n},(_,k)=>`<option value="${k+1}"${k===i?' selected':''}>${k+1}</option>`).join('')}</select> in line</label>`:`<span class="chip ok">#${i+1} in line</span>`);
+  if(cmp)return `<div class="ticket cmp${run?' run':''}"><div class="row"><span class="tno">${esc(j.id)}</span><span class="sp"></span>${chip}</div><div style="font-weight:600">${esc(j.part)}</div>${(j.lines||[]).length?`<div class="small"><b>Job number</b> ${esc(nosTxt(j))}</div>`:''}${w?`<div class="warn small">${w}</div>`:''}</div>`;
+  let o=`<div class="ticket${run?' run':''}"><div class="row"><span class="tno">${esc(j.id)}</span><span class="sp"></span>${chip}</div>
   <div style="font-weight:600">${esc(j.part)}</div>${(j.bend||[]).length?`<div class="small btag">⌐ Then bending: ${esc(bendTxt(j))}</div>`:''}${j.fromJob?`<div class="small btag">✂ Cut parts from ${esc(j.fromJob)}</div>`:''}${(j.lines||[]).length?`<div class="small"><b>Job number</b> ${esc(nosTxt(j))}</div>`:''}<div class="small mut">${esc(j.qty)} parts · ${m?esc(mName(m)):'From cut parts'}${plTxt(j)?' · '+esc(plTxt(j)):''}${j.program?` · ${isForm(j.machine)?'Part no. ':''}${esc(j.program)}`:''}${j.dia?` · Ø ${esc(j.dia)} mm`:''}${j.rshape?` · ${esc(j.rshape)}`:''}${j.die?` · Die ${esc(j.die)}`:''}${j.punch?` · Punch ${esc(j.punch)}`:''}</div>${w?`<div class="warn">${w}</div>`:''}${pics(j.photos,false,assets?'rmJobPh:'+j.id:'')}${assets?`<div style="margin-top:6px">${uplBtn(`data-up="${esc(j.id)}"`,'+ Photo')}</div>`:''}`;
   if(!run)o+=`<div class="row" style="margin-top:8px"><button class="sm" data-act="up" data-id="${esc(j.id)}" ${i===0?'disabled':''} aria-label="Move up">↑</button><button class="sm" data-act="down" data-id="${esc(j.id)}" ${i===n-1?'disabled':''} aria-label="Move down">↓</button><span class="sp"></span><button class="sm${armed===j.id?' arm':''}" data-act="del" data-id="${esc(j.id)}">${armed===j.id?'Tap again to remove':'Remove'}</button></div>`;
   return o+'</div>';
