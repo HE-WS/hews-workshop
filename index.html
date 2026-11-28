@@ -34,6 +34,7 @@ h2{font-size:32px;margin-bottom:6px}h3{font-size:22px}
 .ticket.run{border:2px solid var(--run)}
 .tno{font-family:"Barlow Condensed","Arial Narrow","Roboto Condensed","Segoe UI",Arial,sans-serif;font-weight:700;font-size:22px}
 .chip{display:inline-block;font-size:13px;font-weight:600;padding:2px 9px;border-radius:99px;background:var(--line);white-space:nowrap}
+.chip.qpos{display:inline-flex;align-items:center;gap:2px;cursor:pointer;border-color:var(--acc,#f5c400)!important}.chip.qpos select{appearance:auto;background:transparent;border:0;color:inherit;font:inherit;font-weight:700;padding:0 2px;margin:0;width:auto;min-height:0;height:auto;cursor:pointer;box-shadow:none}.chip.qpos select option{color:#111}
 .chip.run{background:var(--run);color:var(--card)}.chip.bad{background:var(--bad);color:#fff}.chip.ok{background:transparent;border:1px solid var(--line)}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .sp{flex:1}
@@ -500,7 +501,7 @@ const nosTxt=j=>(j.lines||[]).map(l=>l.no+(num(l.m2)?' ('+f2(l.m2)+' m²)':'')).
 function ticket(j,i,n){
   const m=mat(j.materialId),run=j.status==='running',ps=(j.plates||[]).map(plate);
   let w='';if(m&&!isForm(j.machine)){if(!ps.length)w='No plate assigned — stock short';else if(ps.some(p=>!p||p.status!=='available'))w='A plate on this job is no longer in stock'}
-  let o=`<div class="ticket${run?' run':''}"><div class="row"><span class="tno">${esc(j.id)}</span><span class="sp"></span>${run?`<span class="chip run pulse">Running · ${esc(j.operator||'')}</span>${j.gas?' '+gasChip(j):''}`:`<span class="chip ok">#${i+1} in line</span>`}</div>
+  let o=`<div class="ticket${run?' run':''}"><div class="row"><span class="tno">${esc(j.id)}</span><span class="sp"></span>${run?`<span class="chip run pulse">Running · ${esc(j.operator||'')}</span>${j.gas?' '+gasChip(j):''}`:(n>1?`<label class="chip ok qpos" title="Choose a new place in the queue">#<select data-qpos="${esc(j.id)}" aria-label="Place in line for ${esc(j.id)}">${Array.from({length:n},(_,k)=>`<option value="${k+1}"${k===i?' selected':''}>${k+1}</option>`).join('')}</select> in line</label>`:`<span class="chip ok">#${i+1} in line</span>`)}</div>
   <div style="font-weight:600">${esc(j.part)}</div>${(j.bend||[]).length?`<div class="small btag">⌐ Then bending: ${esc(bendTxt(j))}</div>`:''}${j.fromJob?`<div class="small btag">✂ Cut parts from ${esc(j.fromJob)}</div>`:''}${(j.lines||[]).length?`<div class="small"><b>Job number</b> ${esc(nosTxt(j))}</div>`:''}<div class="small mut">${esc(j.qty)} parts · ${m?esc(mName(m)):'From cut parts'}${plTxt(j)?' · '+esc(plTxt(j)):''}${j.program?` · ${isForm(j.machine)?'Part no. ':''}${esc(j.program)}`:''}${j.dia?` · Ø ${esc(j.dia)} mm`:''}${j.rshape?` · ${esc(j.rshape)}`:''}${j.die?` · Die ${esc(j.die)}`:''}${j.punch?` · Punch ${esc(j.punch)}`:''}</div>${w?`<div class="warn">${w}</div>`:''}${pics(j.photos,false,assets?'rmJobPh:'+j.id:'')}${assets?`<div style="margin-top:6px">${uplBtn(`data-up="${esc(j.id)}"`,'+ Photo')}</div>`:''}`;
   if(!run)o+=`<div class="row" style="margin-top:8px"><button class="sm" data-act="up" data-id="${esc(j.id)}" ${i===0?'disabled':''} aria-label="Move up">↑</button><button class="sm" data-act="down" data-id="${esc(j.id)}" ${i===n-1?'disabled':''} aria-label="Move down">↓</button><span class="sp"></span><button class="sm${armed===j.id?' arm':''}" data-act="del" data-id="${esc(j.id)}">${armed===j.id?'Tap again to remove':'Remove'}</button></div>`;
   return o+'</div>';
@@ -1290,6 +1291,7 @@ document.addEventListener('change',e=>{
 
 
 
+    else if(d.qpos){const j=S.jobs.find(x=>x.id===d.qpos);if(j&&j.status==='queued'){const qd=S.jobs.filter(x=>x.machine===j.machine&&x.status==='queued').sort(bySeq),seqs=qd.map(x=>num(x.seq)),to=Math.min(qd.length,Math.max(1,Math.round(num(t.value))))-1,from=qd.indexOf(j);if(to!==from){qd.splice(from,1);qd.splice(to,0,j);const base=seqs.every((v,k)=>k===0||v>seqs[k-1])?seqs:qd.map((_,k)=>k+1);qd.forEach((x,k)=>x.seq=base[k]);setMsg(`${j.id} moved to #${to+1} in line.`);save()}else render()}}
     else if(d.hd){draft[d.hd]=t.value;render()}
     else if(d.donef){(draft.doneF||(draft.doneF={}))[d.donef]=t.value;ls.set('doneF',t.value);render()}
     else if(d.urole&&isAdmin()&&SRV){srvAct('urole',d.urole,t.value)}
