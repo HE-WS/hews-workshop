@@ -430,11 +430,11 @@ function vPlan(){
   for(const m of MACH){
     const run=S.jobs.filter(j=>j.machine===m.id&&j.status==='running'),qd=S.jobs.filter(j=>j.machine===m.id&&j.status==='queued').sort(bySeq);
     const mo=(S.maint||{})[m.id];
-    const hj=hid('jobs_'+m.id),hd=hid('det_'+m.id),nj=run.length+qd.length;
-    o+=`<section class="col"><div class="colh"><h3>${m.name}</h3><span class="mut small">${m.sw?m.sw+' · ':''}${qd.length} waiting</span></div>
-    <div class="row" style="gap:6px;margin:-4px 0 10px">${nj?`<button class="sm hb" data-act="hideBlk" data-id="jobs_${m.id}" aria-expanded="${hj?'false':'true'}">${hj?`Show jobs (${nj})`:'Hide jobs'}</button>`:''}${nj&&!hj?`<button class="sm hb" data-act="hideBlk" data-id="det_${m.id}" aria-expanded="${hd?'false':'true'}">${hd?'Show details':'Hide details'}</button>`:''}</div>${mo&&mo.on?`<div class="mbar">🔧 MAINTENANCE since ${esc(new Date(mo.since).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}))}<span class="sp"></span><button class="mt" data-act="maint" data-id="${m.id}">Turn off</button></div>`:`<div style="margin-bottom:10px"><button class="mt" data-act="maint" data-id="${m.id}">🔧 Maintenance</button></div>`}`;
-    if(hj)o+=`<div class="empty small" style="padding:12px">${run.length?`${esc(run.map(j=>j.id).join(', '))} running · `:''}${qd.length} waiting — jobs hidden</div>`;
-    else o+=run.map(j=>ticket(j,-1,0,hd)).join('')+qd.map((j,i)=>ticket(j,i,qd.length,hd)).join('');
+    const hj=hid('col_'+m.id);
+    o+=`<section class="col"><div class="colh"><h3>${m.name}</h3><span class="mut small">${m.sw?m.sw+' · ':''}${run.length?'running · ':''}${qd.length} waiting</span><span class="sp"></span>${hBtn('col_'+m.id)}</div>`;
+    if(hj){o+='</section>';continue}
+    o+=`${mo&&mo.on?`<div class="mbar">🔧 MAINTENANCE since ${esc(new Date(mo.since).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}))}<span class="sp"></span><button class="mt" data-act="maint" data-id="${m.id}">Turn off</button></div>`:`<div style="margin-bottom:10px"><button class="mt" data-act="maint" data-id="${m.id}">🔧 Maintenance</button></div>`}`;
+    o+=run.map(j=>ticket(j,-1,0)).join('')+qd.map((j,i)=>ticket(j,i,qd.length)).join('');
     if(!run.length&&!qd.length)o+=`<div class="empty">Nothing queued</div>`;
     o+=doneBox(m);
     o+='</section>';
