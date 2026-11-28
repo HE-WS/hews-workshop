@@ -36,7 +36,7 @@ h2{font-size:32px;margin-bottom:6px}h3{font-size:22px}
 .chip{display:inline-block;font-size:13px;font-weight:600;padding:2px 9px;border-radius:99px;background:var(--line);white-space:nowrap}
 .chip.qpos{display:inline-flex;align-items:center;gap:2px;cursor:pointer;border-color:var(--acc,#f5c400)!important}.chip.qpos select{appearance:auto;background:transparent;border:0;color:inherit;font:inherit;font-weight:700;padding:0 2px;margin:0;width:auto;min-height:0;height:auto;cursor:pointer;box-shadow:none}.chip.qpos select option{color:#111}
 .ticket.cmp{padding-top:10px;padding-bottom:10px}.ticket.cmp .tno{font-size:1.05em}
-.chip.run{background:var(--run);color:var(--card)}.chip.bad{background:var(--bad);color:#fff}.chip.ok{background:transparent;border:1px solid var(--line)}
+.chip.run{background:var(--run);color:var(--card)}.chip.bad{background:var(--bad);color:#fff}.chip.ok{background:transparent;border:1px solid var(--line)}.chip.pendc{background:#f08c00;color:#fff}.ticket.pend{border-left:4px solid #f08c00;opacity:.85}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .sp{flex:1}
 button,.btn{font:600 16px Barlow,sans-serif;min-height:44px;padding:8px 16px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
@@ -308,6 +308,16 @@ const plate=id=>S.plates.find(p=>p.id===id);
 const rset=()=>new Set(S.jobs.filter(j=>j.status!=='done').flatMap(j=>j.plates||[]));
 const platesOf=(mid,st)=>S.plates.filter(p=>p.materialId===mid&&(!st||p.status===st));
 const sumA=arr=>arr.reduce((x,p)=>x+area(p),0);
+const jNeed=j=>(j.lines||[]).reduce((x,l)=>x+num(l.m2),0);
+const pendMat=j=>j.status==='queued'&&!isForm(j.machine)&&!!j.materialId&&!!mat(j.materialId)&&!(j.plates||[]).map(plate).some(p=>p&&p.status==='available');
+function pendInfo(j){const need=jNeed(j),on=S.plates.filter(p=>p.materialId===j.materialId&&p.status==='ordered'),eta=on.map(p=>p.eta).filter(Boolean).sort()[0];return `${need?'needs '+f2(need)+' m² · ':''}${on.length?`${on.length} plate(s) on order${eta?' · ETA '+etaTxt(eta):''}`:'none on order'}`}
+function autoFill(){const done=[],rs=rset();
+  for(const j of S.jobs.filter(pendMat).sort((a,b)=>num(a.created)-num(b.created))){
+    const free=S.plates.filter(p=>p.materialId===j.materialId&&p.status==='available'&&!rs.has(p.id));if(!free.length)continue;
+    const need=jNeed(j),e=1e-9;let pick=[];const one=free.filter(p=>area(p)>=need-e).sort((a,b)=>area(a)-area(b))[0];
+    if(one)pick=[one];else{let t=0;for(const p of free.slice().sort((a,b)=>area(b)-area(a))){pick.push(p);t+=area(p);if(t>=need-e)break}if(t<need-e)continue}
+    j.plates=pick.map(p=>p.id);j.autoPl=Date.now();pick.forEach(p=>rs.add(p.id));done.push(j.id+' ('+j.plates.join(', ')+')')}
+  return done}
 function stats(m,rs=rset()){const av=platesOf(m.id,'available'),on=sumA(av),res=sumA(av.filter(p=>rs.has(p.id)));return {n:av.length,on,res,free:on-res,ord:sumA(platesOf(m.id,'ordered'))}}
 const low=(m,s)=>num(m.reorder)>0&&s.free<=num(m.reorder);
 const nextId=(p,arr,base)=>p+(arr.reduce((x,o)=>Math.max(x,parseInt(String(o.id).replace(/\D/g,''))||0),base)+1);
@@ -352,7 +362,7 @@ async function uploadFiles(files,done){if(!assets)return;busy+=files.length;setM
   for(const f of files){try{const r=await assets.upload(await shrink(f),{type:'image/jpeg'});done(r.id)}catch(e){setMsg('Photo upload failed: '+(e&&(e.code||e.message)||'error'))}busy--}
   if(!busy)setMsg('Photo(s) added.');render()}
 
-function save(){render();if(!ref)return;const body=JSON.parse(JSON.stringify(S));q=q.then(()=>ref.set(body)).catch(e=>{msg='Could not save: '+(e&&(e.message||e.code)||'error');render()})}
+function save(){const af=autoFill();if(af.length)setMsg((msg?msg+' ':'')+'Material ready, plates assigned automatically: '+af.join('; ')+'.');render();if(!ref)return;const body=JSON.parse(JSON.stringify(S));q=q.then(()=>ref.set(body)).catch(e=>{msg='Could not save: '+(e&&(e.message||e.code)||'error');render()})}
 
 function shapeSVG(shape,d){
   shape=SHAPES[shape]?shape:'rect';d=d||{};const g=geom(shape,d),o0=g.o||[];
@@ -431,7 +441,7 @@ function vPlan(){
     const run=S.jobs.filter(j=>j.machine===m.id&&j.status==='running'),qd=S.jobs.filter(j=>j.machine===m.id&&j.status==='queued').sort(bySeq);
     const mo=(S.maint||{})[m.id];
     const hj=hid('col_'+m.id);
-    o+=`<section class="col"><div class="colh"><h3>${m.name}</h3><span class="mut small">${m.sw?m.sw+' · ':''}${run.length?'running · ':''}${qd.length} waiting</span><span class="sp"></span>${hBtn('col_'+m.id)}</div>`;
+    o+=`<section class="col"><div class="colh"><h3>${m.name}</h3><span class="mut small">${m.sw?m.sw+' · ':''}${run.length?'running · ':''}${qd.length} waiting${qd.filter(pendMat).length?` · <b style="color:#f08c00">${qd.filter(pendMat).length} pending material</b>`:''}</span><span class="sp"></span>${hBtn('col_'+m.id)}</div>`;
     if(hj){o+='</section>';continue}
     o+=`${mo&&mo.on?`<div class="mbar">🔧 MAINTENANCE since ${esc(new Date(mo.since).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}))}<span class="sp"></span><button class="mt" data-act="maint" data-id="${m.id}">Turn off</button></div>`:`<div style="margin-bottom:10px"><button class="mt" data-act="maint" data-id="${m.id}">🔧 Maintenance</button></div>`}`;
     o+=run.map(j=>ticket(j,-1,0)).join('')+qd.map((j,i)=>ticket(j,i,qd.length)).join('');
@@ -504,7 +514,7 @@ function m2Txt(dj){const t=(dj.lines||[]).reduce((x,l)=>x+num(l.m2),0),ps=(dj.pl
 const nosTxt=j=>(j.lines||[]).map(l=>l.no+(num(l.m2)?' ('+f2(l.m2)+' m²)':'')).join(', ');
 function ticket(j,i,n,cmp){
   const m=mat(j.materialId),run=j.status==='running',ps=(j.plates||[]).map(plate);
-  let w='';if(m&&!isForm(j.machine)){if(!ps.length)w='No plate assigned — stock short';else if(ps.some(p=>!p||p.status!=='available'))w='A plate on this job is no longer in stock'}
+  let w='';if(m&&!isForm(j.machine)){if(pendMat(j))w='⏳ Pending material — '+esc(pendInfo(j))+'. The operator can see it but cannot start it; it becomes ready by itself when the plates arrive.';else if(ps.some(p=>!p||p.status!=='available'))w='A plate on this job is no longer in stock'}
   const chip=run?`<span class="chip run pulse">Running · ${esc(j.operator||'')}</span>${j.gas?' '+gasChip(j):''}`:(n>1?`<label class="chip ok qpos" title="Choose a new place in the queue">#<select data-qpos="${esc(j.id)}" aria-label="Place in line for ${esc(j.id)}">${Array.from({length:n},(_,k)=>`<option value="${k+1}"${k===i?' selected':''}>${k+1}</option>`).join('')}</select> in line</label>`:`<span class="chip ok">#${i+1} in line</span>`);
   if(cmp)return `<div class="ticket cmp${run?' run':''}"><div class="row"><span class="tno">${esc(j.id)}</span><span class="sp"></span>${chip}</div><div style="font-weight:600">${esc(j.part)}</div>${(j.lines||[]).length?`<div class="small"><b>Job number</b> ${esc(nosTxt(j))}</div>`:''}${w?`<div class="warn small">${w}</div>`:''}</div>`;
   let o=`<div class="ticket${run?' run':''}"><div class="row"><span class="tno">${esc(j.id)}</span><span class="sp"></span>${chip}</div>
@@ -516,7 +526,7 @@ function ticket(j,i,n,cmp){
 /* ---------- Operator ---------- */
 function vOp(){
   {const al=opMachines();if(!al.includes(opM)){opM=al[0];ls.set('opM',opM)}}
-  const run=S.jobs.find(j=>j.machine===opM&&j.status==='running'),qd=S.jobs.filter(j=>j.machine===opM&&j.status==='queued').sort(bySeq),m=MACH.find(x=>x.id===opM);
+  const run=S.jobs.find(j=>j.machine===opM&&j.status==='running'),qa=S.jobs.filter(j=>j.machine===opM&&j.status==='queued').sort(bySeq),qd=qa.filter(j=>!pendMat(j)),pnd=qa.filter(pendMat),m=MACH.find(x=>x.id===opM);
   let o=`${note()}<div class="mpick"${opMachines().length<3?` style="grid-template-columns:repeat(${opMachines().length},minmax(0,1fr))"`:''}>${MACH.filter(x=>opMachines().includes(x.id)).map(x=>`<button data-act="opm" data-id="${x.id}" class="${x.id===opM?'on':''}">${x.name}</button>`).join('')}</div>`;
   if((S.maint||{})[opM]?.on)return o+`<div class="maint" role="status"><b>MAINTENANCE</b><span>The ${esc(m.name)} is under maintenance. Jobs will show again when the planner turns maintenance off.</span></div>`;
   o+=`<div style="max-width:320px;margin-bottom:16px"><label for="opName">Operator name</label><input id="opName" value="${esc(ls.get('opName')||'')}" placeholder="Your name"></div>`;
@@ -534,9 +544,10 @@ function vOp(){
      <div class="row" style="margin-top:12px"><button class="go" data-act="chgSave" style="flex:1">Confirm</button><button data-act="chgX">Cancel</button></div></div>`}}
   if(run)o+=endPanel(run);
   else if(qd[0]){const j=qd[0];o+=`<div class="panel now"><div><span class="chip">Next on ${m.name}</span><div class="bigno" style="margin-top:8px">${esc(j.id)}</div><h3 style="margin-top:4px">${esc(j.part)}</h3>${details(j)}</div><div style="align-self:end">${GAS[j.machine]?`<label style="font-size:16px;color:var(--ink)">Cutting gas <span class="mut small">— choose before starting</span></label><div class="gas" role="radiogroup" aria-label="Cutting gas">${GAS[j.machine].map(([k,l,sub,c])=>`<button role="radio" aria-checked="${draft.gas===k}" class="${draft.gas===k?'on':''}" style="--gc:${c}" data-act="gasPick" data-id="${k}"><i></i>${l}<small>${sub}</small></button>`).join('')}</div>`:''}<button class="go big" data-act="start" data-id="${esc(j.id)}"${GAS[j.machine]&&!gasInfo(j.machine,draft.gas)?' disabled style="opacity:.45;cursor:not-allowed"':''}>Start job</button><p class="small mut">${j.machine==='roll'?'Set the rolls for the diameter listed, then press Start.':j.machine==='bend'?'Set up the die and punch listed, then press Start.':'Load the plate(s) listed, then press Start.'}</p></div></div>`}
-  else o+=`<div class="empty">No jobs queued for ${m.name}. The planner adds them.</div>`;
+  else o+=`<div class="empty">${pnd.length?`No job ready to start on ${m.name} — waiting for material.`:`No jobs queued for ${m.name}. The planner adds them.`}</div>`;
   const nx=qd.slice(run?0:1,(run?0:1)+3);
   if(nx.length)o+=`<h3 style="margin:22px 0 8px">Then</h3>`+nx.map(j=>`<div class="ticket"><b>${esc(j.id)}</b> · ${esc(j.part)} <span class="mut small">· ${esc(mName(mat(j.materialId)))}</span></div>`).join('');
+  if(pnd.length)o+=`<h3 style="margin:22px 0 8px">Pending material</h3>`+pnd.map(j=>`<div class="ticket pend"><div class="row"><b>${esc(j.id)}</b> · ${esc(j.part)}<span class="sp"></span><span class="chip pendc">⏳ Pending material</span></div><div class="small mut">${esc(mName(mat(j.materialId)))}${(j.lines||[]).length?' · Job number '+esc(nosTxt(j)):''}</div><div class="small">${esc(pendInfo(j))}. You cannot start this job yet — it becomes ready by itself when the plates arrive.</div><div class="row" style="margin-top:8px"><button class="sm" disabled style="opacity:.45;cursor:not-allowed">Start job</button></div></div>`).join('');
   return o;
 }
 function details(j){const mt=mat(j.materialId),ps=(j.plates||[]).map(plate).filter(Boolean);return `${(j.bendItems||[]).length?`<p style="margin:8px 0 2px"><b>Pieces to bend</b>${j.fromJob?` <span class="small mut">(cut on ${esc(j.fromJob)})</span>`:''}</p>${bendList(j.bendItems,j.bendPh)}`:''}${(j.bend||[]).length?`<p style="margin:8px 0 2px"><b>After cutting, these go to bending</b></p>${bendList(j.bend,j.bendPh)}`:''}${j.gas&&j.status!=='running'?`<p style="margin:6px 0">${gasChip(j)}</p>`:''}${(j.lines||[]).length?`<table class="xl" style="margin:10px 0"><thead><tr><th>#</th><th>Job number</th><th>m²</th></tr></thead><tbody>${j.lines.map((l,i)=>`<tr><td class="rn">${i+1}</td><td style="padding:6px 8px"><b>${esc(l.no)}</b></td><td style="padding:6px 8px">${num(l.m2)?f2(l.m2):''}${l.L?`<span class="small mut"> (${esc(l.L)}×${esc(l.W)}${num(l.n)>1?` × ${esc(l.n)} pcs`:''})</span>`:''}</td></tr>`).join('')}</tbody></table>`:''}<dl><dt>Parts</dt><dd>${esc(j.qty)}</dd><dt>Material</dt><dd>${esc(mName(mt))}</dd>${ps.length?`<dt>Plates</dt><dd>${ps.map(p=>`${esc(p.id)}: ${esc(pDesc(p))}`).join('<br>')}</dd>`:''}${j.program?`<dt>${isForm(j.machine)?'Part no.':'Program'}</dt><dd>${esc(j.program)}</dd>`:''}${j.dia?`<dt>Diameter</dt><dd>${esc(j.dia)} mm</dd>`:''}${j.rshape?`<dt>Rolled shape</dt><dd>${esc(j.rshape)}</dd>`:''}${j.die?`<dt>Die</dt><dd>${esc(j.die)}</dd>`:''}${j.punch?`<dt>Punch</dt><dd>${esc(j.punch)}</dd>`:''}</dl>${(j.photos||[]).length?`<p class="small mut" style="margin:0">Photos — tap to enlarge</p>${pics(j.photos,true)}`:''}`}
@@ -1391,6 +1402,7 @@ document.addEventListener('click',e=>{
   else if(a==='del'){if(armed!==id){armed=id;render();return}S.jobs=S.jobs.filter(x=>x.id!==id);armed='';save()}
   else if(a==='opm'){draft.gas='';opM=id;ls.set('opM',id);render()}
   else if(a==='start'){const j=S.jobs.find(x=>x.id===id),nm=(ls.get('opName')||'').trim();if(!nm){setMsg('Type your name before starting.');render();$('#opName')?.focus();return}
+    if(!j||pendMat(j)){setMsg('This job is pending material. It can start when the plates arrive.');render();return}
     if(S.jobs.some(x=>x.machine===j.machine&&x.status==='running')){setMsg('Another job is already running on this machine.');render();return}
     if(GAS[j.machine]){if(!gasInfo(j.machine,draft.gas)){setMsg('Choose the cutting gas first.');render();return}j.gas=draft.gas}draft.gas='';j.status='running';j.startedAt=Date.now();j.operator=nm;save()}
   else if(a==='addPiece'){draft.end.pieces.push({shape:'rect',d:{L:0,W:0,a:0,b:0},keep:'keep'});render();document.getElementById('pd'+(draft.end.pieces.length-1)+'L')?.focus()}
